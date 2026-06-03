@@ -7,6 +7,21 @@ const JsonRPC = function (opts) {
   this.opts = opts || {};
   // @ts-ignore
   this.http = this.opts.ssl ? https : http;
+  // Reuse TCP connections instead of opening a fresh one per call (the upstream default is
+  // agent:false). Over a high-latency link the per-request TCP/TLS handshake dominates and
+  // throttles effective concurrency; pooling lets concurrent fetches actually run in parallel.
+  // The agent is per-client (not module-level) so it carries this client's own TLS settings.
+  // @ts-ignore
+  const agentOpts: any = { keepAlive: true, maxSockets: 64, keepAliveMsecs: 30000 };
+  if (opts && opts.ssl) {
+    if (opts.sslCa) { agentOpts.ca = opts.sslCa; }
+    agentOpts.rejectUnauthorized = opts.sslStrict !== false;
+    // @ts-ignore
+    this.agent = new https.Agent(agentOpts);
+  } else {
+    // @ts-ignore
+    this.agent = new http.Agent(agentOpts);
+  }
 };
 
 JsonRPC.prototype.call = function (method, params) {
@@ -46,7 +61,7 @@ JsonRPC.prototype.call = function (method, params) {
         'Host': this.opts.host || 'localhost',
         'Content-Length': requestJSON.length
       },
-      agent: false,
+      agent: this.agent,
       rejectUnauthorized: this.opts.ssl && this.opts.sslStrict !== false
     };
 

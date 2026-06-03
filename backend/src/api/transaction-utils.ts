@@ -78,9 +78,13 @@ class TransactionUtils {
   /** @asyncUnsafe */
   public async $getMempoolTransactionsExtended(txids: string[], addPrevouts = false, lazyPrevouts = false, forceCore = false): Promise<MempoolTransactionExtended[]> {
     if (forceCore || config.MEMPOOL.BACKEND !== 'esplora') {
-      const limiter = pLimit(8); // Run 8 requests at a time
+      // raised 8 -> 32 to hide the per-RPC round-trip latency of a remote
+      // (e.g. Tailscale) Core node during initial mempool sync. Requires the node's
+      // rpcthreads/rpcworkqueue to be raised accordingly; the Retry wrapper falls back
+      // (forceCore) so a transient "work queue depth exceeded" doesn't drop the tx.
+      const limiter = pLimit(32);
       const results = await Promise.allSettled(txids.map(
-        txid => limiter(() => this.$getMempoolTransactionExtended(txid, addPrevouts, lazyPrevouts, forceCore))
+        txid => limiter(() => this.$getTransactionExtendedRetry(txid, addPrevouts, lazyPrevouts, forceCore, true))
       ));
       return results.filter(reply => reply.status === 'fulfilled')
         .map(r => (r as PromiseFulfilledResult<MempoolTransactionExtended>).value);

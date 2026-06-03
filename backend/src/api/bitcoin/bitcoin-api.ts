@@ -10,6 +10,8 @@ import { Common } from '../common';
 
 class BitcoinApi implements AbstractBitcoinApi {
   private rawMempoolCache: IBitcoinApi.RawMempool | null = null;
+  // singleflight guard so concurrent mempool loaders share ONE getrawmempool-true fetch
+  private rawMempoolCachePromise: Promise<IBitcoinApi.RawMempool> | null = null;
   protected bitcoindClient: any;
 
   constructor(bitcoinClient: any) {
@@ -381,7 +383,16 @@ class BitcoinApi implements AbstractBitcoinApi {
     }
     let mempoolEntry: IBitcoinApi.MempoolEntry;
     if (!mempool.isInSync() && !this.rawMempoolCache) {
-      this.rawMempoolCache = await this.$getRawMempoolVerbose();
+      // under concurrent mempool loading every in-flight tx would otherwise kick off
+      // its own ~47MB getrawmempool-true fetch (thundering herd → multi-GB spike + stall).
+      // Share a single in-flight promise; reset it on failure so it can be retried.
+      if (!this.rawMempoolCachePromise) {
+        this.rawMempoolCachePromise = this.$getRawMempoolVerbose().catch((e) => {
+          this.rawMempoolCachePromise = null;
+          throw e;
+        });
+      }
+      this.rawMempoolCache = await this.rawMempoolCachePromise;
     }
     if (this.rawMempoolCache && this.rawMempoolCache[transaction.txid]) {
       mempoolEntry = this.rawMempoolCache[transaction.txid];

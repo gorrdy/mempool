@@ -163,21 +163,40 @@ class Blocks {
       }
     }
 
-    // Fetch remaining txs individually
-    for (const txid of txIds.filter(txid => !transactionMap[txid])) {
-      if (!quiet && (totalFound % (Math.round((txIds.length) / 10)) === 0 || totalFound + 1 === txIds.length)) { // Avoid log spam
-        logger.debug(`Indexing tx ${totalFound + 1} of ${txIds.length} in block #${blockHeight}`);
+    // Fetch the remaining txs with a bounded worker pool instead of a sequential await
+    // loop. Each tx is a separate Core RPC round-trip, so over a high-latency backend
+    // (e.g. a remote node) the sequential loop is pathologically slow. The bounded
+    // concurrency stays within the node's rpcworkqueue/rpcthreads, and the Retry wrapper
+    // absorbs an occasional "work queue depth exceeded". On the first failure we stop
+    // handing out work and rethrow so the block is retried by the caller.
+    const missingTxids = txIds.filter(txid => !transactionMap[txid]);
+    const FETCH_CONCURRENCY = 16;
+    let fetched = 0;
+    let nextIndex = 0;
+    let failure: Error | null = null;
+    const fetchWorker = async (): Promise<void> => {
+      for (let i = nextIndex++; i < missingTxids.length && !failure; i = nextIndex++) {
+        const txid = missingTxids[i];
+        try {
+          const tx = await transactionUtils.$getTransactionExtendedRetry(txid, false, false, false, addMempoolData);
+          transactionMap[txid] = tx;
+          const done = ++fetched;
+          if (!quiet && (done % Math.max(1, Math.round(missingTxids.length / 10)) === 0 || done === missingTxids.length)) { // Avoid log spam
+            logger.debug(`Indexing tx ${done} of ${missingTxids.length} in block #${blockHeight}`);
+          }
+        } catch (e) {
+          failure = e instanceof Error ? e : new Error(`${e}`);
+          logger.err(`Cannot fetch tx ${txid}. Reason: ` + failure.message);
+        }
       }
-      try {
-        const tx = await transactionUtils.$getTransactionExtendedRetry(txid, false, false, false, addMempoolData);
-        transactionMap[txid] = tx;
-        totalFound++;
-      } catch (e) {
-        const msg = `Cannot fetch tx ${txid}. Reason: ` + (e instanceof Error ? e.message : e);
-        logger.err(msg);
-        throw new Error(msg);
-      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(FETCH_CONCURRENCY, missingTxids.length) }, () => fetchWorker())
+    );
+    if (failure) {
+      throw new Error(`Cannot fetch block transactions. Reason: ${(failure as Error).message}`);
     }
+    totalFound += missingTxids.length;
 
     if (!quiet) {
       logger.debug(`${foundInMempool} of ${txIds.length} found in mempool. ${totalFound - foundInMempool} fetched through backend service.`);
