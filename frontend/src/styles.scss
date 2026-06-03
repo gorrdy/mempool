@@ -6,7 +6,7 @@ $active-bg: #000000;
 $hover-bg: #12131e;
 $fg: #fff;
 $nav-bg: $bg;
-$title-fg: #2055e3;
+$title-fg: #e6413e;
 
 $taproot: #eba814;
 $taproot-light: #d5a90a;
@@ -20,11 +20,11 @@ $gray-700: $fg;
 
 $nav-tabs-link-active-bg: $active-bg;
 
-$primary: #007cfa;
+$primary: #e6413e;
 $secondary: #272f4e;
-$tertiary: #6225b2;
+$tertiary: #a82e2b;
 $success: #0aab2f;
-$info: #00ddff;
+$info: #f06b68;
 
 $h5-font-size: 1.15rem !default;
 
@@ -121,7 +121,7 @@ $dropdown-link-active-bg: $active-bg;
   --mempool-block-top: #403834;
   --mempool-block-side: #2d2825;
   --mempool-block-loading: #554b45;
-  --alert-bg: #3a1c61;
+  --alert-bg: #4a1c1c;
   --navbar-bg: #212121;
   --transparent-fg: #ffffffbb;
   --footer-fg: rgba(255, 255, 255, 0.4);
@@ -137,7 +137,7 @@ $dropdown-link-active-bg: $active-bg;
   --liquid: #116761;
   --liquidtestnet: #494a4a;
 
-  --mainnet-alt: #9339f4;
+  --mainnet-alt: #e6413e;
   --testnet-alt: #183550;
   --signet-alt: #471850;
   --regtest-alt: #4a4a4a;
@@ -155,9 +155,9 @@ $dropdown-link-active-bg: $active-bg;
   --orange: #ff9f00;
   --pink: #e83e8c;
 
-  --search-button: #4d2d77;
-  --search-button-border: #472a6e;
-  --search-button-focus: #533180;
+  --search-button: #7a2422;
+  --search-button-border: #6e2120;
+  --search-button-focus: #8a2825;
   --search-button-shadow: #7c58ab80;
   
   --bs-body-color: var(--fg);
