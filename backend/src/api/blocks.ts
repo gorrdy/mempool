@@ -6,6 +6,7 @@ import { BlockExtended, BlockExtension, BlockSummary, PoolTag, TransactionExtend
 import { Common } from './common';
 import diskCache from './disk-cache';
 import transactionUtils from './transaction-utils';
+import { FIREFISH_ADDRESSES, $getFirefishTxids } from './firefish';
 import bitcoinClient from './bitcoin/bitcoin-client';
 import { IBitcoinApi } from './bitcoin/bitcoin-api.interface';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
@@ -399,6 +400,17 @@ class Blocks {
         if (oldestLog) {
           extras.firstSeen = getBlockFirstSeenFromLogs(block.id, block.timestamp, oldestLog);
         }
+      }
+    }
+
+    // [firefish] count how many of this block's transactions touch a Firefish address, for
+    // display (kept as an extra so the real tx_count / block stats remain intact).
+    if (FIREFISH_ADDRESSES.length) {
+      try {
+        const ffTxids = await $getFirefishTxids();
+        extras.firefishTxCount = transactions.reduce((n, tx) => n + (ffTxids.has(tx.txid) ? 1 : 0), 0);
+      } catch (e) {
+        logger.debug('[firefish] failed to count block firefish txs: ' + (e instanceof Error ? e.message : e));
       }
     }
 

@@ -64,7 +64,7 @@
             </ng-template>
             <div [attr.data-cy]="'bitcoin-block-' + i + '-transactions'" class="transaction-count">
               <ng-container
-                *ngTemplateOutlet="block.tx_count === 1 ? transactionsSingular : transactionsPlural; context: {$implicit: block.tx_count | number}"></ng-container>
+                *ngTemplateOutlet="(block.extras?.firefishTxCount ?? block.tx_count) === 1 ? transactionsSingular : transactionsPlural; context: {$implicit: (block.extras?.firefishTxCount ?? block.tx_count) | number}"></ng-container>
               <ng-template #transactionsSingular let-i i18n="shared.transaction-count.singular">{{ i }} transaction</ng-template>
               <ng-template #transactionsPlural let-i i18n="shared.transaction-count.plural">{{ i }} transactions</ng-template>
             </div>

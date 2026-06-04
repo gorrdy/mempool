@@ -23,6 +23,7 @@ export default class BlockScene {
   gridWidth: number;
   gridHeight: number;
   gridSize: number;
+  blockLimit: number;
   vbytesPerUnit: number;
   unitPadding: number;
   unitWidth: number;
@@ -94,6 +95,7 @@ export default class BlockScene {
       tx.destroy();
       delete this.txs[tx.txid];
     });
+    this.fitScaleToTxs(txs);
     this.layout = new BlockLayout({ width: this.gridWidth, height: this.gridHeight });
     let txViews = txs.map(tx => new TxView(tx, this));
     if (sort) {
@@ -158,6 +160,7 @@ export default class BlockScene {
       });
     }, (startTime - performance.now()) + this.animationDuration + 1000);
 
+    this.fitScaleToTxs(txs);
     this.layout = new BlockLayout({ width: this.gridWidth, height: this.gridHeight });
 
     if (sort) {
@@ -261,6 +264,7 @@ export default class BlockScene {
     };
 
     // Set the scale of the visualization (with a 5% margin)
+    this.blockLimit = blockLimit;
     this.vbytesPerUnit = blockLimit / Math.pow(resolution / 1.02, 2);
     this.gridWidth = resolution;
     this.gridHeight = resolution;
@@ -485,6 +489,26 @@ export default class BlockScene {
       x: Math.floor(x / this.gridSize),
       y: Math.floor(y / this.gridSize)
     };
+  }
+
+  // [firefish] Scale the visualization to the displayed transactions: when only a few txs are
+  // shown (e.g. filtered), zoom them up to fill most of the block square while preserving their
+  // relative sizes. For a full block this is a no-op (capped at the real block limit).
+  private fitScaleToTxs(txs: { vsize: number }[]): void {
+    if (!txs || !txs.length) {
+      return;
+    }
+    let totalVsize = 0;
+    for (const tx of txs) {
+      totalVsize += (tx.vsize || 0);
+    }
+    // Target a fraction of the block area for the displayed txs. The row-based BlockLayout
+    // packs few large squares inefficiently, so keep this conservative — too high and a few
+    // big squares overflow the block (extra rows below it). ~0.4 keeps the squares large and
+    // clearly visible while still fitting inside the square.
+    const fill = 0.4;
+    const effective = Math.max(1, Math.min(this.blockLimit, totalVsize / fill));
+    this.vbytesPerUnit = effective / Math.pow(this.gridWidth / 1.02, 2);
   }
 
   // calculates and returns the size of the tx in multiples of the grid size

@@ -214,6 +214,7 @@ export interface BlockExtension {
   maxFee?: number;
   feeRange?: number[];
   reward?: number;
+  firefishTxCount?: number; // [firefish] number of txs in this block touching a Firefish address
   coinbaseRaw?: string;
   matchRate?: number;
   expectedFees?: number;

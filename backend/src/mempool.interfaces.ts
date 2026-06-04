@@ -301,6 +301,8 @@ export interface BlockExtension {
   medianFee: number; // median fee rate
   feeRange: number[]; // fee rate percentiles
   reward: number;
+  firefishTxCount?: number; // [firefish] number of txs in this block touching a Firefish address
+
   matchRate: number | null;
   expectedFees: number | null;
   expectedWeight: number | null;
