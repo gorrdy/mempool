@@ -259,6 +259,40 @@ class BitcoindElectrsApi extends BitcoinApi implements AbstractBitcoinApi {
     return addrScripthash!.match(/.{2}/g)!.reverse().join('');
   }
 
+  // [firefish] Return the set of *mempool* (unconfirmed) txids that touch any of the given
+  // addresses, as input or output, via the Electrum/Fulcrum address index. Used to restrict
+  // the tracked mempool to Firefish-related transactions.
+  async $getMempoolTxidsForAddresses(addresses: string[]): Promise<string[]> {
+    const txids = new Set<string>();
+    for (const address of addresses) {
+      try {
+        const addressInfo = await this.bitcoindClient.validateAddress(address);
+        if (!addressInfo || !addressInfo.isvalid) {
+          logger.warn(`[firefish] skipping invalid filter address: ${address}`);
+          continue;
+        }
+        const scripthash = this.encodeScriptHash(addressInfo.scriptPubKey);
+        let entries: { tx_hash: string; height: number }[];
+        try {
+          // get_mempool returns only unconfirmed entries
+          entries = await this.electrumClient.blockchainScripthash_getMempool(scripthash);
+        } catch (e) {
+          // fallback for servers without get_mempool: full history, keep unconfirmed (height <= 0)
+          const history = await this.electrumClient.blockchainScripthash_getHistory(scripthash);
+          entries = (history || []).filter((h) => h.height <= 0);
+        }
+        for (const entry of (entries || [])) {
+          if (entry && entry.tx_hash) {
+            txids.add(entry.tx_hash);
+          }
+        }
+      } catch (e) {
+        logger.debug(`[firefish] mempool lookup failed for ${address}: ` + (e instanceof Error ? e.message : e));
+      }
+    }
+    return [...txids];
+  }
+
 }
 
 export default BitcoindElectrsApi;

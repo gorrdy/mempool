@@ -50,6 +50,15 @@ import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
 
+// [firefish] Only transactions touching one of these addresses (as input or output) are
+// tracked in the mempool, so the projected mempool blocks show Firefish transactions only.
+// Leave empty to track the full mempool.
+const FIREFISH_ADDRESSES: string[] = [
+  'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl',           // fee bump
+  'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v',           // escrow fee bump
+  'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z', // liquidator
+];
+
 class Server {
   private wss: WebSocket.Server | undefined;
   private wssUnixSocket: WebSocket.Server | undefined;
@@ -252,7 +261,16 @@ class Server {
           logger.debug(msg);
         }
       }
-      const newMempool = await bitcoinApi.$getRawMempool();
+      let newMempool = await bitcoinApi.$getRawMempool();
+      // [firefish] restrict the tracked mempool to transactions touching Firefish addresses
+      if (FIREFISH_ADDRESSES.length && typeof (bitcoinApi as any).$getMempoolTxidsForAddresses === 'function') {
+        try {
+          const ffTxids = new Set<string>(await (bitcoinApi as any).$getMempoolTxidsForAddresses(FIREFISH_ADDRESSES));
+          newMempool = newMempool.filter((txid) => ffTxids.has(txid));
+        } catch (e) {
+          logger.warn('[firefish] address filter failed, keeping full mempool this cycle: ' + (e instanceof Error ? e.message : e));
+        }
+      }
       const minFeeMempool = memPool.limitGBT ? await bitcoinSecondClient.getRawMemPool() : null;
       const minFeeTip = memPool.limitGBT ? await bitcoinSecondClient.getBlockCount() : -1;
       const latestAccelerations = await accelerationApi.$updateAccelerations();
