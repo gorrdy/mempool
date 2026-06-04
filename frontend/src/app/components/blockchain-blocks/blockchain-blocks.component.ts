@@ -342,7 +342,10 @@ export class BlockchainBlocksComponent implements OnInit, OnChanges, OnDestroy {
     } else if (block.loading) {
       return this.getStyleForLoadingBlock(index, animateEnterFrom);
     }
-    const greenBackgroundHeight = 100 - (block.weight / this.stateService.env.BLOCK_WEIGHT_UNITS) * 100;
+    // [firefish] when only Firefish txs are shown, render the block's fullness from their weight
+    // only, so a block with few Firefish txs looks mostly empty in the chain.
+    const effectiveWeight = block.extras?.firefishWeight ?? block.weight;
+    const greenBackgroundHeight = 100 - (effectiveWeight / this.stateService.env.BLOCK_WEIGHT_UNITS) * 100;
     let addLeft = 0;
 
     if (animateEnterFrom) {

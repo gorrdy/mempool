@@ -215,6 +215,7 @@ export interface BlockExtension {
   feeRange?: number[];
   reward?: number;
   firefishTxCount?: number; // [firefish] number of txs in this block touching a Firefish address
+  firefishWeight?: number; // [firefish] total weight of this block's txs touching a Firefish address
   coinbaseRaw?: string;
   matchRate?: number;
   expectedFees?: number;

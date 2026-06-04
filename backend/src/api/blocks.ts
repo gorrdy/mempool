@@ -403,12 +403,22 @@ class Blocks {
       }
     }
 
-    // [firefish] count how many of this block's transactions touch a Firefish address, for
-    // display (kept as an extra so the real tx_count / block stats remain intact).
+    // [firefish] count how many of this block's transactions touch a Firefish address, and their
+    // total weight, for display (kept as extras so the real tx_count / block stats stay intact).
+    // firefishWeight lets the chain blocks render their "fullness" from the Firefish content only.
     if (FIREFISH_ADDRESSES.length) {
       try {
         const ffTxids = await $getFirefishTxids();
-        extras.firefishTxCount = transactions.reduce((n, tx) => n + (ffTxids.has(tx.txid) ? 1 : 0), 0);
+        let ffCount = 0;
+        let ffWeight = 0;
+        for (const tx of transactions) {
+          if (ffTxids.has(tx.txid)) {
+            ffCount++;
+            ffWeight += tx.weight || (tx.vsize ? tx.vsize * 4 : 0);
+          }
+        }
+        extras.firefishTxCount = ffCount;
+        extras.firefishWeight = ffWeight;
       } catch (e) {
         logger.debug('[firefish] failed to count block firefish txs: ' + (e instanceof Error ? e.message : e));
       }
