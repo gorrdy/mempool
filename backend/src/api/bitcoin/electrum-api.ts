@@ -293,6 +293,32 @@ class BitcoindElectrsApi extends BitcoinApi implements AbstractBitcoinApi {
     return [...txids];
   }
 
+  // [firefish] Return all txids (confirmed + mempool) that touch any of the given addresses,
+  // as input or output, via the Electrum/Fulcrum address index. Used to filter the
+  // transactions shown for already-mined blocks.
+  async $getTxidsForAddresses(addresses: string[]): Promise<string[]> {
+    const txids = new Set<string>();
+    for (const address of addresses) {
+      try {
+        const addressInfo = await this.bitcoindClient.validateAddress(address);
+        if (!addressInfo || !addressInfo.isvalid) {
+          logger.warn(`[firefish] skipping invalid filter address: ${address}`);
+          continue;
+        }
+        const scripthash = this.encodeScriptHash(addressInfo.scriptPubKey);
+        const history = await this.electrumClient.blockchainScripthash_getHistory(scripthash);
+        for (const entry of (history || [])) {
+          if (entry && entry.tx_hash) {
+            txids.add(entry.tx_hash);
+          }
+        }
+      } catch (e) {
+        logger.debug(`[firefish] history lookup failed for ${address}: ` + (e instanceof Error ? e.message : e));
+      }
+    }
+    return [...txids];
+  }
+
 }
 
 export default BitcoindElectrsApi;

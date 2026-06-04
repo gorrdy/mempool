@@ -15,6 +15,7 @@ import loadingIndicators from '../loading-indicators';
 import { CpfpInfo, TransactionExtended } from '../../mempool.interfaces';
 import logger from '../../logger';
 import blocks from '../blocks';
+import { FIREFISH_ADDRESSES, $getFirefishTxids } from '../firefish';
 import bitcoinClient from './bitcoin-client';
 import difficultyAdjustment from '../difficulty-adjustment';
 import transactionRepository from '../../repositories/TransactionRepository';
@@ -426,7 +427,12 @@ class BitcoinRoutes {
       return;
     }
     try {
-      const transactions = await blocks.$getStrippedBlockTransactions(req.params.hash);
+      let transactions = await blocks.$getStrippedBlockTransactions(req.params.hash);
+      // [firefish] show only Firefish transactions in mined blocks
+      if (FIREFISH_ADDRESSES.length) {
+        const ffTxids = await $getFirefishTxids();
+        transactions = transactions.filter((tx) => ffTxids.has(tx.txid));
+      }
       res.setHeader('Expires', new Date(Date.now() + 1000 * 3600 * 24 * 30).toUTCString());
       res.json(transactions);
     } catch (e) {
@@ -677,7 +683,12 @@ class BitcoinRoutes {
     try {
       loadingIndicators.setProgress('blocktxs-' + req.params.hash, 0);
 
-      const txIds = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
+      let txIds = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
+      // [firefish] show only Firefish transactions in mined blocks
+      if (FIREFISH_ADDRESSES.length) {
+        const ffTxids = await $getFirefishTxids();
+        txIds = txIds.filter((txid) => ffTxids.has(txid));
+      }
       const transactions: TransactionExtended[] = [];
       const startingIndex = Math.max(0, parseInt(req.params.index || '0', 10));
 
@@ -1005,7 +1016,12 @@ class BitcoinRoutes {
       return;
     }
     try {
-      const result = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
+      let result = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
+      // [firefish] show only Firefish transactions in mined blocks
+      if (FIREFISH_ADDRESSES.length) {
+        const ffTxids = await $getFirefishTxids();
+        result = result.filter((txid) => ffTxids.has(txid));
+      }
       res.json(result);
     } catch (e) {
       handleError(req, res, 500, 'Failed to get txids for block');

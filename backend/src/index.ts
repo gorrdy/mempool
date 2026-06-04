@@ -49,15 +49,7 @@ import aboutRoutes from './api/about.routes';
 import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
-
-// [firefish] Only transactions touching one of these addresses (as input or output) are
-// tracked in the mempool, so the projected mempool blocks show Firefish transactions only.
-// Leave empty to track the full mempool.
-const FIREFISH_ADDRESSES: string[] = [
-  'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl',           // fee bump
-  'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v',           // escrow fee bump
-  'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z', // liquidator
-];
+import { FIREFISH_ADDRESSES } from './api/firefish';
 
 class Server {
   private wss: WebSocket.Server | undefined;
