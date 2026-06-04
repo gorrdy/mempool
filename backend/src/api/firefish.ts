@@ -28,10 +28,11 @@ export async function $getFirefishTxids(): Promise<Set<string>> {
     const fn = (bitcoinApi as any).$getTxidsForAddresses;
     if (typeof fn === 'function') {
       const txids = new Set<string>(await fn.call(bitcoinApi, FIREFISH_ADDRESSES));
-      // also track prefund txs (parents of escrow-setups), which don't touch a Firefish address
-      for (const t of prefundTxids) {
-        txids.add(t);
-      }
+      // NOTE: prefund txs are intentionally NOT added here. This set drives the *confirmed block*
+      // filter and firefishTxCount, which is fixed when a block is processed — but a prefund is
+      // only discovered later (once its escrow-setup exists), so including it here makes a block's
+      // preview show more txs than its (already-stored) count. Prefunds are tracked in the mempool
+      // filter (see index.ts) instead, where the prefund -> escrow-setup chain forms live.
       txidCache = { txids, time: now };
       return txids;
     }
