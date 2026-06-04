@@ -331,8 +331,10 @@ class Blocks {
     const extended: TransactionExtended[] = [];
     await Promise.all(ffInBlock.map((txid) => limit(async () => {
       try {
-        const tx = await bitcoinApi.$getRawTransaction(txid, true, false); // with prevouts (TEDSIG needs input addresses)
-        extended.push(transactionUtils.extendTransaction(tx));
+        // use $getTransactionExtended (same as the /txs route) for a fully-populated tx — vin with
+        // prevouts/witness/scriptsig — so getTransactionFlags classifies it (labels) without throwing
+        const tx = await transactionUtils.$getTransactionExtended(txid, true, true);
+        extended.push(tx);
       } catch (e) {
         logger.debug('[firefish] failed to fetch firefish tx for block summary: ' + (e instanceof Error ? e.message : e));
       }
