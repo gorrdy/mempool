@@ -48,6 +48,19 @@
   }
 }
 
+// [firefish] overlay for per-tx type labels drawn on top of the WebGL squares
+.block-overview-label-canvas {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .loader-wrapper {
   position: absolute;
   background: var(--block-goggles-overlay);

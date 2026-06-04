@@ -2,6 +2,7 @@
 <div class="graph-alignment" [class.grid-align]="!autofit" [style.gridTemplateColumns]="'repeat(auto-fit, ' + resolution + 'px)'">
   <div class="block-overview-graph">
     <canvas *browserOnly class="block-overview-canvas" [class.clickable]="!!hoverTx" #blockCanvas></canvas>
+    <canvas *browserOnly class="block-overview-label-canvas" #labelCanvas></canvas>
     @if (!disableSpinner) {
       <div class="loader-wrapper" [class.hidden]="!isLoading && !unavailable">
         <div *ngIf="!unavailable" class="spinner-border ms-3 loading" role="status"></div>

@@ -10,7 +10,7 @@ import { StateService } from '@app/services/state.service';
 import { ThemeService } from '@app/services/theme.service';
 import { Subscription } from 'rxjs';
 import { defaultColorFunction, setOpacity, defaultAuditColors, defaultColors, ageColorFunction, contrastColorFunction, contrastAuditColors, contrastColors } from '@components/block-overview-graph/utils';
-import { ActiveFilter, FilterMode, toFlags } from '@app/shared/filters.utils';
+import { ActiveFilter, FilterMode, toFlags, TransactionFlags } from '@app/shared/filters.utils';
 import { detectWebGL } from '@app/shared/graphs.utils';
 
 const unmatchedOpacity = 0.2;
@@ -64,6 +64,9 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
 
   @ViewChild('blockCanvas')
   canvas: ElementRef<HTMLCanvasElement>;
+  @ViewChild('labelCanvas')
+  labelCanvas: ElementRef<HTMLCanvasElement>; // [firefish] overlay for per-tx type labels
+  labelCtx: CanvasRenderingContext2D | null = null;
   themeStateSubscription: Subscription;
   loadedTheme = 'default';
 
@@ -386,6 +389,11 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
       this.displayHeight = window.devicePixelRatio * this.cssHeight;
       this.canvas.nativeElement.width = this.displayWidth;
       this.canvas.nativeElement.height = this.displayHeight;
+      if (this.labelCanvas?.nativeElement) { // [firefish] keep the label overlay in sync
+        this.labelCanvas.nativeElement.width = this.displayWidth;
+        this.labelCanvas.nativeElement.height = this.displayHeight;
+        this.labelCtx = this.labelCanvas.nativeElement.getContext('2d');
+      }
       if (this.gl) {
         this.gl.viewport(0, 0, this.displayWidth, this.displayHeight);
       }
@@ -495,6 +503,13 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
         this.readyNextFrame = false;
         this.readyEvent.emit();
       }
+
+      // [firefish] draw per-tx type labels once the squares have settled (positions are final)
+      if (now > this.scene.animateUntil) {
+        this.drawFirefishLabels();
+      } else if (this.labelCtx) {
+        this.labelCtx.clearRect(0, 0, this.displayWidth, this.displayHeight);
+      }
     }
 
     /* LOOP */
@@ -505,6 +520,60 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
       this.animationHeartBeat = window.setTimeout(() => {
         this.start();
       }, 1000);
+    }
+  }
+
+  // [firefish] short type label for a tx, by precedence (matches the colour precedence in utils.ts)
+  firefishLabel(tx: TxView): string | null {
+    const f = tx.bigintFlags;
+    if (!f) {
+      return null;
+    }
+    if (f & TransactionFlags.firefish_tedsig) { return 'TEDSIG'; }
+    if (f & TransactionFlags.firefish_repayment) { return 'REPAYMENT'; }
+    if (f & TransactionFlags.firefish_top_up) { return 'TOP_UP'; }
+    if (f & TransactionFlags.firefish_escrow_setup) { return 'ESCROW_SETUP'; }
+    if (f & TransactionFlags.firefish_prefund) { return 'PREFUND'; }
+    return null;
+  }
+
+  // [firefish] draw the type label centered on each Firefish tx square (white text + dark outline,
+  // readable on any colour; font shrunk to fit the square). Cheap: only Firefish txs are shown here.
+  drawFirefishLabels(): void {
+    if (!this.labelCtx || !this.scene || !this.scene.txs) {
+      return;
+    }
+    const ctx = this.labelCtx;
+    ctx.clearRect(0, 0, this.displayWidth, this.displayHeight);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const dpr = window.devicePixelRatio || 1;
+    for (const txid in this.scene.txs) {
+      const tx = this.scene.txs[txid];
+      const label = this.firefishLabel(tx);
+      if (!label || !tx.screenPosition) {
+        continue;
+      }
+      const s = tx.screenPosition.s; // square size in device px
+      if (s < 22 * dpr) {
+        continue; // too small to label legibly
+      }
+      const cx = tx.screenPosition.x + (s / 2);
+      const cy = this.displayHeight - (tx.screenPosition.y + (s / 2));
+      let fontSize = s * 0.22;
+      ctx.font = `600 ${fontSize}px sans-serif`;
+      const maxW = s * 0.86;
+      const w = ctx.measureText(label).width;
+      if (w > maxW) {
+        fontSize = Math.max(fontSize * (maxW / w), 7 * dpr);
+        ctx.font = `600 ${fontSize}px sans-serif`;
+      }
+      ctx.lineWidth = Math.max(2, fontSize * 0.16);
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeText(label, cx, cy);
+      ctx.fillText(label, cx, cy);
     }
   }
 
