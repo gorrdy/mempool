@@ -7,6 +7,8 @@ import { TransactionFlags } from '@app/shared/filters.utils';
 const firefishRepaymentColor: Color = { r: 0.13, g: 0.82, b: 0.55, a: 1 }; // teal-green
 const firefishEscrowSetupColor: Color = { r: 0.95, g: 0.55, b: 0.15, a: 1 }; // amber/orange
 const firefishTedsigColor: Color = { r: 0.60, g: 0.40, b: 0.95, a: 1 }; // violet
+const firefishTopUpColor: Color = { r: 0.20, g: 0.65, b: 0.95, a: 1 }; // blue
+const firefishPrefundColor: Color = { r: 0.95, g: 0.30, b: 0.60, a: 1 }; // pink
 
 export function hexToColor(hex: string): Color {
   return {
@@ -137,7 +139,7 @@ export function defaultColorFunction(
   const rate = tx.fee / tx.vsize; // color by simple single-tx fee rate
   const levelIndex = colors.baseLevel(tx, rate, relativeTime || (Date.now() / 1000));
   const levelColor = colors.base[levelIndex] || colors.base[defaultMempoolFeeColors.length - 1];
-  // [firefish] colour by firefish tx type, in every mode (tedsig > repayment > escrow setup)
+  // [firefish] colour by firefish tx type, in every mode
   if (tx.bigintFlags) {
     if (tx.bigintFlags & TransactionFlags.firefish_tedsig) {
       return firefishTedsigColor;
@@ -145,8 +147,14 @@ export function defaultColorFunction(
     if (tx.bigintFlags & TransactionFlags.firefish_repayment) {
       return firefishRepaymentColor;
     }
+    if (tx.bigintFlags & TransactionFlags.firefish_top_up) {
+      return firefishTopUpColor;
+    }
     if (tx.bigintFlags & TransactionFlags.firefish_escrow_setup) {
       return firefishEscrowSetupColor;
+    }
+    if (tx.bigintFlags & TransactionFlags.firefish_prefund) {
+      return firefishPrefundColor;
     }
   }
   // Normal mode

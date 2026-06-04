@@ -293,6 +293,27 @@ class BitcoindElectrsApi extends BitcoinApi implements AbstractBitcoinApi {
     return [...txids];
   }
 
+  // [firefish] Return the most recent `limit` txids touching an address (by height; unconfirmed
+  // first). Used to scan recent escrow-setups for their prefund parents.
+  async $getRecentHistoryTxids(address: string, limit: number): Promise<string[]> {
+    try {
+      const addressInfo = await this.bitcoindClient.validateAddress(address);
+      if (!addressInfo || !addressInfo.isvalid) {
+        return [];
+      }
+      const scripthash = this.encodeScriptHash(addressInfo.scriptPubKey);
+      const history = await this.electrumClient.blockchainScripthash_getHistory(scripthash);
+      return (history || [])
+        .slice()
+        .sort((a, b) => ((b.height > 0 ? b.height : Number.MAX_SAFE_INTEGER) - (a.height > 0 ? a.height : Number.MAX_SAFE_INTEGER)))
+        .slice(0, limit)
+        .map((h) => h.tx_hash);
+    } catch (e) {
+      logger.debug(`[firefish] recent history failed for ${address}: ` + (e instanceof Error ? e.message : e));
+      return [];
+    }
+  }
+
   // [firefish] Return all txids (confirmed + mempool) that touch any of the given addresses,
   // as input or output, via the Electrum/Fulcrum address index. Used to filter the
   // transactions shown for already-mined blocks.

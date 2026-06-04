@@ -9,6 +9,7 @@ import { isPoint } from '../utils/secp256k1';
 import logger from '../logger';
 import { getVarIntLength, opcodes, parseMultisigScript } from '../utils/bitcoin-script';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
+import { getPrefundTxids } from './firefish';
 
 // Bitcoin Core default policy settings
 const MAX_STANDARD_TX_WEIGHT = 400_000;
@@ -633,6 +634,11 @@ export class Common {
         break;
       }
     }
+    // [firefish] PREFUND_TX: parent of an escrow-setup (txid-based, from the cached prefund set)
+    flags &= ~TransactionFlags.firefish_prefund;
+    if (getPrefundTxids().has(tx.txid)) {
+      flags |= TransactionFlags.firefish_prefund;
+    }
 
     // Already processed static flags, no need to do it again
     if (tx.flags) {
@@ -647,23 +653,29 @@ export class Common {
     } else if (tx.version === 3) {
       flags |= TransactionFlags.v3;
     }
-    // [firefish] classify firefish txs by their outputs:
+    // [firefish] classify firefish txs by their outputs (precedence: repayment > top-up > escrow-setup):
     //  - REPAYMENT (escrow closing): a dust output (< 512 sats, typ. ~294/295) to the fee-bump address
+    //  - TOP_UP: a dust output to the escrow-fee-bump address
     //  - ESCROW_SETUP (escrow creation): any other tx with an output to a firefish address
     const FIREFISH_FEE_BUMP_ADDRESS = 'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl';
+    const FIREFISH_ESCROW_FEE_BUMP_ADDRESS = 'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v';
     const FIREFISH_ADDRESSES = [
       FIREFISH_FEE_BUMP_ADDRESS,
-      'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v',
+      FIREFISH_ESCROW_FEE_BUMP_ADDRESS,
       'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z',
     ];
-    const FIREFISH_REPAYMENT_MAX_SATS = 512;
+    const FIREFISH_DUST_MAX_SATS = 512;
     let firefishRepayment = false;
+    let firefishTopUp = false;
     let firefishOutput = false;
     for (const vout of tx.vout || []) {
       const addr = vout.scriptpubkey_address;
       if (!addr) { continue; }
-      if (addr === FIREFISH_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_REPAYMENT_MAX_SATS) {
+      if (addr === FIREFISH_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_DUST_MAX_SATS) {
         firefishRepayment = true;
+      }
+      if (addr === FIREFISH_ESCROW_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_DUST_MAX_SATS) {
+        firefishTopUp = true;
       }
       if (FIREFISH_ADDRESSES.includes(addr)) {
         firefishOutput = true;
@@ -671,6 +683,8 @@ export class Common {
     }
     if (firefishRepayment) {
       flags |= TransactionFlags.firefish_repayment;
+    } else if (firefishTopUp) {
+      flags |= TransactionFlags.firefish_top_up;
     } else if (firefishOutput) {
       flags |= TransactionFlags.firefish_escrow_setup;
     }

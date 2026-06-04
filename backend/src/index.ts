@@ -49,7 +49,7 @@ import aboutRoutes from './api/about.routes';
 import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
-import { FIREFISH_ADDRESSES } from './api/firefish';
+import { FIREFISH_ADDRESSES, getPrefundTxids, $refreshPrefundTxids } from './api/firefish';
 
 class Server {
   private wss: WebSocket.Server | undefined;
@@ -256,9 +256,11 @@ class Server {
       let newMempool = await bitcoinApi.$getRawMempool();
       // [firefish] restrict the tracked mempool to transactions touching Firefish addresses
       if (FIREFISH_ADDRESSES.length && typeof (bitcoinApi as any).$getMempoolTxidsForAddresses === 'function') {
+        void $refreshPrefundTxids(); // throttled refresh of the prefund (escrow-setup parents) set
         try {
           const ffTxids = new Set<string>(await (bitcoinApi as any).$getMempoolTxidsForAddresses(FIREFISH_ADDRESSES));
-          newMempool = newMempool.filter((txid) => ffTxids.has(txid));
+          const prefunds = getPrefundTxids();
+          newMempool = newMempool.filter((txid) => ffTxids.has(txid) || prefunds.has(txid));
         } catch (e) {
           logger.warn('[firefish] address filter failed, keeping full mempool this cycle: ' + (e instanceof Error ? e.message : e));
         }
