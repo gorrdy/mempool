@@ -34,28 +34,17 @@ let addressRefreshTime = 0;
 let backfillDone = false;
 let backfillRunning = false;
 
-// A "true" escrow-setup (escrow creation), matching the label precedence in common.ts
-// getTransactionFlags (repayment > top-up > escrow-setup). Only these yield a prefund — a top-up
-// (dust to escrow-fee-bump) is a fee bump on an existing escrow, not escrow creation, so its funder
-// must NOT be tracked as a prefund.
+// A "true" escrow-setup (escrow creation) sends a non-dust amount (>= 512 sats) to the escrow
+// (escrow-fee-bump) address — that big output is the escrow. A top-up sends only dust (< 512) there,
+// so it's a fee bump on an existing escrow, not escrow creation. Only escrow-setups yield a prefund
+// (their funding input), so a top-up's funder must NOT be tracked as a prefund.
 function isEscrowSetup(tx: any): boolean {
-  let firefishOutput = false;
-  let repayment = false;
-  let topUp = false;
   for (const vout of tx.vout || []) {
-    const addr = vout.scriptpubkey_address;
-    if (!addr) { continue; }
-    if (addr === FIREFISH_ADDRESSES[0] && vout.value > 0 && vout.value < DUST_MAX_SATS) {
-      repayment = true; // dust to fee-bump => repayment
-    }
-    if (addr === FIREFISH_ADDRESSES[1] && vout.value > 0 && vout.value < DUST_MAX_SATS) {
-      topUp = true; // dust to escrow-fee-bump => top-up (not escrow creation)
-    }
-    if (FIREFISH_ADDRESSES.includes(addr)) {
-      firefishOutput = true;
+    if (vout.scriptpubkey_address === FIREFISH_ADDRESSES[1] && vout.value >= DUST_MAX_SATS) {
+      return true;
     }
   }
-  return firefishOutput && !repayment && !topUp;
+  return false;
 }
 
 // ---- persistence (the expensive prefund backfill is cached so restarts are instant) ------------
