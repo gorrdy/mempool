@@ -49,7 +49,7 @@ import aboutRoutes from './api/about.routes';
 import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
-import { FIREFISH_ADDRESSES, getPrefundTxids, $refreshPrefundTxids } from './api/firefish';
+import { FIREFISH_ADDRESSES, getPrefundTxids, $updateFirefishIndex } from './api/firefish';
 
 class Server {
   private wss: WebSocket.Server | undefined;
@@ -256,7 +256,7 @@ class Server {
       let newMempool = await bitcoinApi.$getRawMempool();
       // [firefish] restrict the tracked mempool to transactions touching Firefish addresses
       if (FIREFISH_ADDRESSES.length && typeof (bitcoinApi as any).$getMempoolTxidsForAddresses === 'function') {
-        void $refreshPrefundTxids(); // throttled refresh of the prefund (escrow-setup parents) set
+        void $updateFirefishIndex(); // throttled address-index refresh + one-time prefund backfill
         try {
           const ffTxids = new Set<string>(await (bitcoinApi as any).$getMempoolTxidsForAddresses(FIREFISH_ADDRESSES));
           const prefunds = getPrefundTxids();
@@ -269,6 +269,9 @@ class Server {
       const minFeeTip = memPool.limitGBT ? await bitcoinSecondClient.getBlockCount() : -1;
       const latestAccelerations = await accelerationApi.$updateAccelerations();
       const numHandledBlocks = await blocks.$updateBlocks();
+      if (FIREFISH_ADDRESSES.length) {
+        blocks.recomputeFirefishCounts(); // catch up cached blocks' Firefish counts as the index updates
+      }
       const pollRate = config.MEMPOOL.POLL_RATE_MS * (indexer.indexerIsRunning() ? 10 : 1);
       if (numHandledBlocks === 0) {
         await memPool.$updateMempool(newMempool, latestAccelerations, minFeeMempool, minFeeTip, pollRate);

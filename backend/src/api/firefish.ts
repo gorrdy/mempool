@@ -1,66 +1,36 @@
 import bitcoinApi from './bitcoin/bitcoin-api-factory';
 import logger from '../logger';
+import config from '../config';
+import pLimit from '../utils/p-limit';
+import * as fs from 'fs';
 
-// Only transactions touching one of these addresses (as input or output) are shown:
-// in the projected mempool blocks (see index.ts) and in already-mined blocks (see
-// bitcoin.routes.ts). An empty list disables Firefish filtering entirely.
+// This instance is a Firefish-only explorer: only transactions related to Firefish are tracked,
+// counted and shown. "Related" means a tx that, as input or output, touches one of these addresses,
+// plus the prefund txs that fund escrow-setups (see below). An empty list disables all filtering.
 export const FIREFISH_ADDRESSES: string[] = [
   'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl',           // fee bump
   'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v',           // escrow fee bump
   'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z', // liquidator
 ];
 
-let txidCache: { txids: Set<string>; time: number } | null = null;
-const TXID_CACHE_TTL_MS = 60_000;
-
-// Set of all txids (confirmed + mempool) touching the Firefish addresses, queried from the
-// Electrum/Fulcrum address index and cached briefly. Used to filter the transactions shown
-// for already-mined blocks (intersect a block's txids with this set).
-export async function $getFirefishTxids(): Promise<Set<string>> {
-  if (!FIREFISH_ADDRESSES.length) {
-    return new Set();
-  }
-  const now = Date.now();
-  let addr: Set<string> | undefined;
-  if (txidCache && (now - txidCache.time) < TXID_CACHE_TTL_MS) {
-    addr = txidCache.txids;
-  } else {
-    try {
-      const fn = (bitcoinApi as any).$getTxidsForAddresses;
-      if (typeof fn === 'function') {
-        addr = new Set<string>(await fn.call(bitcoinApi, FIREFISH_ADDRESSES));
-        txidCache = { txids: addr, time: now };
-      }
-    } catch (e) {
-      logger.warn('[firefish] $getFirefishTxids failed: ' + (e instanceof Error ? e.message : e));
-    }
-  }
-  // fall back to the last known address set rather than hiding everything on a transient failure
-  if (!addr) {
-    addr = txidCache?.txids || new Set();
-  }
-  // Union the tracked prefund txs (parents of escrow-setups). A prefund is co-confirmed with its
-  // escrow-setup (the escrow-setup is a CPFP child paying for the prefund), so it is seeded into the
-  // prefund set the moment its block is processed (see registerBlockPrefunds), keeping it consistent
-  // with that block's firefishTxCount and shown in both the mempool and confirmed blocks.
-  const result = new Set<string>(addr);
-  for (const t of prefundTxids) {
-    result.add(t);
-  }
-  return result;
-}
-
-// ---- PREFUND tracking -------------------------------------------------------------------------
-// A prefund tx is the parent of an escrow-setup: its output is spent as the escrow-setup's input.
-// Prefund txs don't touch a Firefish address, so we discover them by scanning a recent window of
-// escrow-setups and collecting their input txids, then track & label those.
-
 const DUST_MAX_SATS = 512;
-const PREFUND_WINDOW = 100;       // recent escrow-setups to scan
-const PREFUND_TTL_MS = 300_000;   // refresh at most every 5 minutes
+const INDEX_FILE = config.MEMPOOL.CACHE_DIR + '/firefish-index.json';
+const ADDRESS_REFRESH_TTL_MS = 60_000;
+const BACKFILL_CONCURRENCY = 32;
 
-let prefundTxids: Set<string> = new Set();
-let prefundTime = 0;
+// ---- index state -------------------------------------------------------------------------------
+// The index is the single source of truth for "which txs are Firefish, and in which block". It is
+// built cheaply from the Electrum/Fulcrum address history (which gives a block height per tx, so no
+// per-tx fetch is needed for counts) plus a one-time prefund backfill (persisted to disk).
+let addrHeightTxids: Map<number, Set<string>> = new Map(); // address-touching FF txids per height (from Fulcrum)
+let prefundsAtHeight: Map<number, Set<string>> = new Map(); // prefund txids per height
+let confirmedTxids: Set<string> = new Set();               // all confirmed FF txids (address + prefund), for filtering
+let prefundHeight: Map<string, number> = new Map();        // prefund txid -> block height (0 if unconfirmed); persisted
+let prefundTxids: Set<string> = new Set();                 // all prefund txids (for labeling + mempool filter)
+
+let addressRefreshTime = 0;
+let backfillDone = false;
+let backfillRunning = false;
 
 function isEscrowSetup(tx: any): boolean {
   let firefishOutput = false;
@@ -78,72 +48,185 @@ function isEscrowSetup(tx: any): boolean {
   return firefishOutput && !repayment;
 }
 
-// Sync accessor for the last-known prefund txid set (used by getTransactionFlags).
-export function getPrefundTxids(): Set<string> {
-  return prefundTxids;
+function addPrefund(txid: string, height: number): void {
+  prefundHeight.set(txid, height > 0 ? height : 0);
+  prefundTxids.add(txid);
+  if (height > 0) {
+    let set = prefundsAtHeight.get(height);
+    if (!set) { set = new Set(); prefundsAtHeight.set(height, set); }
+    set.add(txid);
+    confirmedTxids.add(txid);
+  }
 }
 
-// Refresh the prefund set from a recent window of escrow-setups (their input txids). Throttled;
-// safe to call every main-loop iteration.
-export async function $refreshPrefundTxids(): Promise<void> {
-  if (!FIREFISH_ADDRESSES.length) {
-    return;
-  }
-  const now = Date.now();
-  if (now - prefundTime < PREFUND_TTL_MS) {
-    return;
-  }
-  prefundTime = now;
+// ---- persistence (the expensive prefund backfill is cached so restarts are instant) ------------
+function loadIndexFromDisk(): void {
   try {
-    const getRecent = (bitcoinApi as any).$getRecentHistoryTxids;
-    const getTx = (bitcoinApi as any).$getRawTransaction;
-    if (typeof getRecent !== 'function' || typeof getTx !== 'function') {
-      return;
+    if (!fs.existsSync(INDEX_FILE)) { return; }
+    const raw = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+    if (raw && raw.prefundHeight) {
+      for (const [txid, h] of Object.entries(raw.prefundHeight)) {
+        addPrefund(txid, Number(h));
+      }
+      backfillDone = !!raw.backfillDone;
+      logger.info(`[firefish] loaded ${prefundHeight.size} prefunds from disk (backfillDone=${backfillDone})`);
     }
-    // escrow-setups pay to the escrow-fee-bump address, so scan its recent history
-    const recent: string[] = await getRecent.call(bitcoinApi, FIREFISH_ADDRESSES[1], PREFUND_WINDOW);
-    const set = new Set<string>();
-    for (const txid of recent) {
+  } catch (e) {
+    logger.warn('[firefish] failed to load index from disk: ' + (e instanceof Error ? e.message : e));
+  }
+}
+
+function saveIndexToDisk(): void {
+  try {
+    const obj = { backfillDone, prefundHeight: Object.fromEntries(prefundHeight) };
+    fs.writeFileSync(INDEX_FILE, JSON.stringify(obj));
+  } catch (e) {
+    logger.warn('[firefish] failed to save index to disk: ' + (e instanceof Error ? e.message : e));
+  }
+}
+
+// ---- address index (cheap: all history with heights, no per-tx fetch) --------------------------
+async function $refreshAddressIndex(force = false): Promise<void> {
+  if (!FIREFISH_ADDRESSES.length) { return; }
+  const now = Date.now();
+  if (!force && (now - addressRefreshTime) < ADDRESS_REFRESH_TTL_MS) { return; }
+  addressRefreshTime = now;
+  try {
+    const fn = (bitcoinApi as any).$getHistoryWithHeights;
+    if (typeof fn !== 'function') { return; }
+    const history: { txid: string; height: number }[] = await fn.call(bitcoinApi, FIREFISH_ADDRESSES);
+    const newAddr = new Map<number, Set<string>>();
+    const newConfirmed = new Set<string>();
+    for (const { txid, height } of history) {
+      if (height > 0) {
+        let set = newAddr.get(height);
+        if (!set) { set = new Set(); newAddr.set(height, set); }
+        set.add(txid);
+        newConfirmed.add(txid);
+      }
+    }
+    // keep confirmed prefunds in the filter set (their heights live in prefundsAtHeight)
+    for (const [txid, h] of prefundHeight) {
+      if (h > 0) { newConfirmed.add(txid); }
+    }
+    addrHeightTxids = newAddr;
+    confirmedTxids = newConfirmed;
+  } catch (e) {
+    logger.warn('[firefish] address index refresh failed: ' + (e instanceof Error ? e.message : e));
+  }
+}
+
+// ---- prefund backfill (one-time, full history; persisted) --------------------------------------
+// Escrow-setups appear in the escrow-fee-bump address history; each escrow-setup's input is a
+// prefund (co-confirmed in the same block). Fetch them once, record prefund -> height, persist.
+async function $backfillPrefunds(): Promise<void> {
+  if (backfillDone || backfillRunning || !FIREFISH_ADDRESSES.length) { return; }
+  backfillRunning = true;
+  try {
+    const getHist = (bitcoinApi as any).$getHistoryWithHeights;
+    const getTx = (bitcoinApi as any).$getRawTransaction;
+    if (typeof getHist !== 'function' || typeof getTx !== 'function') { return; }
+    const hist: { txid: string; height: number }[] = await getHist.call(bitcoinApi, [FIREFISH_ADDRESSES[1]]);
+    logger.info(`[firefish] prefund backfill: scanning ${hist.length} escrow-fee-bump txs...`);
+    const limit = pLimit(BACKFILL_CONCURRENCY);
+    let processed = 0;
+    await Promise.all(hist.map(({ txid, height }) => limit(async () => {
       let tx;
       try {
         tx = await getTx.call(bitcoinApi, txid, false, false);
       } catch (e) {
-        continue;
+        return;
       }
       if (isEscrowSetup(tx)) {
         for (const vin of tx.vin || []) {
           if (vin.txid) {
-            set.add(vin.txid);
+            addPrefund(vin.txid, height);
           }
         }
       }
-    }
-    // merge (don't replace): prefunds seeded from confirmed blocks must not be dropped when they
-    // fall outside this recent scan window
-    for (const t of set) {
-      prefundTxids.add(t);
-    }
+      processed++;
+      if (processed % 5000 === 0) {
+        logger.info(`[firefish] prefund backfill ${processed}/${hist.length} (${prefundHeight.size} prefunds)`);
+      }
+    })));
+    backfillDone = true;
+    saveIndexToDisk();
+    logger.info(`[firefish] prefund backfill complete: ${prefundHeight.size} prefunds`);
   } catch (e) {
-    logger.warn('[firefish] $refreshPrefundTxids failed: ' + (e instanceof Error ? e.message : e));
+    logger.warn('[firefish] prefund backfill failed: ' + (e instanceof Error ? e.message : e));
+  } finally {
+    backfillRunning = false;
   }
 }
 
-// Seed the prefund set from a confirmed block: any input of an escrow-setup that is itself a tx in
-// the same block is a prefund (its output funds that escrow-setup's input). Called when a block is
-// processed so the prefund is recognised immediately — keeping firefishTxCount and the block view
-// consistent without waiting for the periodic scan.
-export function registerBlockPrefunds(transactions: any[]): void {
-  if (!FIREFISH_ADDRESSES.length || !transactions || !transactions.length) {
-    return;
+// ---- public API --------------------------------------------------------------------------------
+
+// Refresh the cheap address index (throttled) and kick off the one-time prefund backfill in the
+// background if it hasn't run yet. Safe to call every main-loop iteration.
+export async function $updateFirefishIndex(): Promise<void> {
+  if (!FIREFISH_ADDRESSES.length) { return; }
+  await $refreshAddressIndex();
+  if (!backfillDone) {
+    void $backfillPrefunds();
   }
+}
+
+// Set of all Firefish txids (address-touching + prefunds) for filtering a block's transactions.
+export async function $getFirefishTxids(): Promise<Set<string>> {
+  if (!FIREFISH_ADDRESSES.length) { return new Set(); }
+  await $refreshAddressIndex();
+  const result = new Set<string>(confirmedTxids);
+  for (const t of prefundTxids) {
+    result.add(t); // include any unconfirmed/mempool prefunds too
+  }
+  return result;
+}
+
+// Number of Firefish txs in the block at the given height (address-touching + prefunds), from the
+// index — consistent with $getFirefishTxids and available for every block, including older ones.
+export function getFirefishCountForHeight(height: number): number {
+  const a = addrHeightTxids.get(height);
+  const p = prefundsAtHeight.get(height);
+  if (!p || p.size === 0) { return a ? a.size : 0; }
+  if (!a || a.size === 0) { return p.size; }
+  const union = new Set<string>(a);
+  for (const t of p) { union.add(t); }
+  return union.size;
+}
+
+// Sync accessor for the prefund txid set (used by getTransactionFlags for the PREFUND_TX label).
+export function getPrefundTxids(): Set<string> {
+  return prefundTxids;
+}
+
+// Force-refresh the address index from Fulcrum (used when a new block is processed, so its txs are
+// in the index before its count is computed).
+export async function $refreshFirefishForBlock(): Promise<void> {
+  if (!FIREFISH_ADDRESSES.length) { return; }
+  await $refreshAddressIndex(true);
+}
+
+// Seed prefunds from a confirmed block as it is processed: any input of an escrow-setup that is
+// itself a tx in the same block is a prefund (co-confirmed). Keeps new blocks consistent without
+// waiting for the periodic backfill.
+export function registerBlockPrefunds(transactions: any[], height: number): void {
+  if (!FIREFISH_ADDRESSES.length || !transactions || !transactions.length || height <= 0) { return; }
   const blockTxids = new Set<string>(transactions.map((t) => t.txid));
+  let changed = false;
   for (const tx of transactions) {
     if (isEscrowSetup(tx)) {
       for (const vin of tx.vin || []) {
-        if (vin.txid && blockTxids.has(vin.txid)) {
-          prefundTxids.add(vin.txid);
+        if (vin.txid && blockTxids.has(vin.txid) && !prefundHeight.has(vin.txid)) {
+          addPrefund(vin.txid, height);
+          changed = true;
         }
       }
     }
   }
+  if (changed && backfillDone) {
+    saveIndexToDisk();
+  }
 }
+
+// load persisted prefunds at startup
+loadIndexFromDisk();

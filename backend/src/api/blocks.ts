@@ -6,7 +6,7 @@ import { BlockExtended, BlockExtension, BlockSummary, PoolTag, TransactionExtend
 import { Common } from './common';
 import diskCache from './disk-cache';
 import transactionUtils from './transaction-utils';
-import { FIREFISH_ADDRESSES, $getFirefishTxids, registerBlockPrefunds } from './firefish';
+import { FIREFISH_ADDRESSES, registerBlockPrefunds, getFirefishCountForHeight, $refreshFirefishForBlock } from './firefish';
 import bitcoinClient from './bitcoin/bitcoin-client';
 import { IBitcoinApi } from './bitcoin/bitcoin-api.interface';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
@@ -64,6 +64,26 @@ class Blocks {
 
   public setBlocks(blocks: BlockExtended[]) {
     this.blocks = blocks;
+  }
+
+  // [firefish] recompute the cached recent blocks' Firefish tx counts from the index, so the chain
+  // display catches up after the index updates (e.g. once the prefund backfill finishes or older
+  // blocks' Firefish txs become known). Returns true if any count changed.
+  public recomputeFirefishCounts(): boolean {
+    if (!FIREFISH_ADDRESSES.length) {
+      return false;
+    }
+    let changed = false;
+    for (const block of this.blocks) {
+      if (block && block.height != null && block.extras) {
+        const count = getFirefishCountForHeight(block.height);
+        if (block.extras.firefishTxCount !== count) {
+          block.extras.firefishTxCount = count;
+          changed = true;
+        }
+      }
+    }
+    return changed;
   }
 
   public getBlockSummaries(): BlockSummary[] {
@@ -403,25 +423,14 @@ class Blocks {
       }
     }
 
-    // [firefish] count how many of this block's transactions touch a Firefish address, and their
-    // total weight, for display (kept as extras so the real tx_count / block stats stay intact).
-    // firefishWeight lets the chain blocks render their "fullness" from the Firefish content only.
+    // [firefish] number of this block's transactions that are Firefish-related, from the Firefish
+    // index (the single source of truth). Kept in extras so the real tx_count / block stats stay
+    // intact; the chain blocks render their "fullness" from this count relative to a recent maximum.
     if (FIREFISH_ADDRESSES.length) {
       try {
-        // seed prefund txs (escrow-setup parents) from this block before counting, so the count
-        // includes them and stays consistent with the block view (prefund is co-confirmed)
-        registerBlockPrefunds(transactions);
-        const ffTxids = await $getFirefishTxids();
-        let ffCount = 0;
-        let ffWeight = 0;
-        for (const tx of transactions) {
-          if (ffTxids.has(tx.txid)) {
-            ffCount++;
-            ffWeight += tx.weight || (tx.vsize ? tx.vsize * 4 : 0);
-          }
-        }
-        extras.firefishTxCount = ffCount;
-        extras.firefishWeight = ffWeight;
+        await $refreshFirefishForBlock();                 // pull this block's FF txs into the index
+        registerBlockPrefunds(transactions, block.height); // seed same-block prefunds (co-confirmed)
+        extras.firefishTxCount = getFirefishCountForHeight(block.height);
       } catch (e) {
         logger.debug('[firefish] failed to count block firefish txs: ' + (e instanceof Error ? e.message : e));
       }

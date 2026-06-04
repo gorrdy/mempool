@@ -340,6 +340,36 @@ class BitcoindElectrsApi extends BitcoinApi implements AbstractBitcoinApi {
     return [...txids];
   }
 
+  // [firefish] Return all (txid, height) history entries for the given addresses, deduped by txid
+  // (keeping the confirmed height when known). height <= 0 means unconfirmed. Used to build the
+  // Firefish per-block-height index cheaply (no per-tx fetch needed).
+  async $getHistoryWithHeights(addresses: string[]): Promise<{ txid: string; height: number }[]> {
+    const byTxid = new Map<string, number>();
+    for (const address of addresses) {
+      try {
+        const addressInfo = await this.bitcoindClient.validateAddress(address);
+        if (!addressInfo || !addressInfo.isvalid) {
+          logger.warn(`[firefish] skipping invalid filter address: ${address}`);
+          continue;
+        }
+        const scripthash = this.encodeScriptHash(addressInfo.scriptPubKey);
+        const history = await this.electrumClient.blockchainScripthash_getHistory(scripthash);
+        for (const entry of (history || [])) {
+          if (entry && entry.tx_hash) {
+            const h = entry.height > 0 ? entry.height : 0;
+            const prev = byTxid.get(entry.tx_hash);
+            if (prev === undefined || (prev <= 0 && h > 0)) {
+              byTxid.set(entry.tx_hash, h);
+            }
+          }
+        }
+      } catch (e) {
+        logger.debug(`[firefish] history-with-heights lookup failed for ${address}: ` + (e instanceof Error ? e.message : e));
+      }
+    }
+    return [...byTxid.entries()].map(([txid, height]) => ({ txid, height }));
+  }
+
 }
 
 export default BitcoindElectrsApi;
