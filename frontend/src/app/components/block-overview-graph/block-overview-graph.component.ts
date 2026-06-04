@@ -504,12 +504,10 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
         this.readyEvent.emit();
       }
 
-      // [firefish] draw per-tx type labels once the squares have settled (positions are final)
-      if (now > this.scene.animateUntil) {
-        this.drawFirefishLabels();
-      } else if (this.labelCtx) {
-        this.labelCtx.clearRect(0, 0, this.displayWidth, this.displayHeight);
-      }
+      // [firefish] draw per-tx type labels at their (final) positions every frame. Drawn always,
+      // not gated on animateUntil, so hovering a tx (which re-arms the animation) doesn't make the
+      // labels blink off and back on.
+      this.drawFirefishLabels();
     }
 
     /* LOOP */

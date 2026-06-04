@@ -473,6 +473,20 @@ class BitcoinRoutes {
     try {
       const block = await blocks.$getBlock(req.params.hash);
 
+      // [firefish] make sure the Firefish tx count is present even for old blocks (which aren't in
+      // the recompute window) so the block page shows the filtered count, not the full tx_count
+      if (FIREFISH_ADDRESSES.length && block && (!block.extras || block.extras.firefishTxCount == null)) {
+        try {
+          const ffTxids = await $getFirefishTxids();
+          const blockTxids = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
+          const count = blockTxids.reduce((n, txid) => n + (ffTxids.has(txid) ? 1 : 0), 0);
+          if (!block.extras) { (block as any).extras = {}; }
+          block.extras.firefishTxCount = count;
+        } catch (e) {
+          // leave firefishTxCount unset on failure
+        }
+      }
+
       const blockAge = new Date().getTime() / 1000 - block.timestamp;
       const day = 24 * 3600;
       let cacheDuration;

@@ -399,17 +399,17 @@
 
     @defer (on viewport) {
       @if (!block?.stale) {
-      <app-block-transactions [paginationMaxSize]="paginationMaxSize" [block$]="block$" [txCount]="block.tx_count" [timestamp]="block.timestamp" [blockHash]="blockHash" [previousBlockHash]="block.previousblockhash" (blockReward)="updateBlockReward($event)"></app-block-transactions>
+      <app-block-transactions [paginationMaxSize]="paginationMaxSize" [block$]="block$" [txCount]="block.extras?.firefishTxCount ?? block.tx_count" [timestamp]="block.timestamp" [blockHash]="blockHash" [previousBlockHash]="block.previousblockhash" (blockReward)="updateBlockReward($event)"></app-block-transactions>
       }
     } @placeholder {
       <div>
         <div class="block-tx-title">
           <h2 class="text-start">
-            <ng-container *ngTemplateOutlet="block.tx_count === 1 ? transactionsSingular : transactionsPlural; context: {$implicit: block.tx_count | number}"></ng-container>
+            <ng-container *ngTemplateOutlet="(block.extras?.firefishTxCount ?? block.tx_count) === 1 ? transactionsSingular : transactionsPlural; context: {$implicit: (block.extras?.firefishTxCount ?? block.tx_count) | number}"></ng-container>
             <ng-template #transactionsSingular let-i i18n="shared.transaction-count.singular">{{ i }} transaction</ng-template>
             <ng-template #transactionsPlural let-i i18n="shared.transaction-count.plural">{{ i }} transactions</ng-template>
           </h2>
-          <ngb-pagination class="pagination-container float-end" [disabled]="true" [collectionSize]="block.tx_count" [rotate]="true" [pageSize]="stateService.env.ITEMS_PER_PAGE" [maxSize]="paginationMaxSize" [boundaryLinks]="true" [ellipses]="false"></ngb-pagination>
+          <ngb-pagination class="pagination-container float-end" [disabled]="true" [collectionSize]="block.extras?.firefishTxCount ?? block.tx_count" [rotate]="true" [pageSize]="stateService.env.ITEMS_PER_PAGE" [maxSize]="paginationMaxSize" [boundaryLinks]="true" [ellipses]="false"></ngb-pagination>
         </div>
         <div class="clearfix"></div>
         <div class="tx-skeleton">
@@ -505,7 +505,7 @@
       <tr>
         <td i18n="mempool-block.transactions">Transactions</td>
         <td>
-          {{ block.tx_count }}
+          {{ block.extras?.firefishTxCount ?? block.tx_count }}
           <span *ngIf="blockAudit.txDelta" class="difference" [class.positive]="blockAudit.txDelta <= 0" [class.negative]="blockAudit.txDelta > 0">
             {{ blockAudit.txDelta < 0 ? '+' : '' }}{{ (-blockAudit.txDelta * 100) | amountShortener: 2 }}%
           </span>
