@@ -6,7 +6,7 @@ import { BlockExtended, BlockExtension, BlockSummary, PoolTag, TransactionExtend
 import { Common } from './common';
 import diskCache from './disk-cache';
 import transactionUtils from './transaction-utils';
-import { FIREFISH_ADDRESSES, registerBlockPrefunds, getFirefishCountForHeight, $refreshFirefishForBlock } from './firefish';
+import { FIREFISH_ADDRESSES, registerBlockPrefunds, $getFirefishTxids } from './firefish';
 import bitcoinClient from './bitcoin/bitcoin-client';
 import { IBitcoinApi } from './bitcoin/bitcoin-api.interface';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
@@ -45,6 +45,8 @@ import { getBlockFirstSeenFromLogs, getOldestLogTimestampFromLogs, scanLogsForBl
 class Blocks {
   private blocks: BlockExtended[] = [];
   private blockSummaries: BlockSummary[] = [];
+  private firefishBlockTxids: Map<string, string[]> = new Map(); // [firefish] cached block txids for recompute
+  private lastFirefishRecompute = 0; // [firefish] throttle for $recomputeFirefishCounts
   private currentBlockHeight = 0;
   private currentBits = 0;
   private lastDifficultyAdjustmentTime = 0;
@@ -66,24 +68,44 @@ class Blocks {
     this.blocks = blocks;
   }
 
-  // [firefish] recompute the cached recent blocks' Firefish tx counts from the index, so the chain
-  // display catches up after the index updates (e.g. once the prefund backfill finishes or older
-  // blocks' Firefish txs become known). Returns true if any count changed.
-  public recomputeFirefishCounts(): boolean {
+  // [firefish] recompute the cached recent blocks' Firefish tx counts by intersecting each block's
+  // txids with the current Firefish set — the same computation the block view uses, so the chain
+  // display stays consistent and catches up as the index fills (e.g. after the prefund backfill).
+  // Throttled; block txids are cached per block hash so repeated runs are cheap.
+  public async $recomputeFirefishCounts(): Promise<void> {
     if (!FIREFISH_ADDRESSES.length) {
-      return false;
+      return;
     }
-    let changed = false;
-    for (const block of this.blocks) {
-      if (block && block.height != null && block.extras) {
-        const count = getFirefishCountForHeight(block.height);
-        if (block.extras.firefishTxCount !== count) {
-          block.extras.firefishTxCount = count;
-          changed = true;
+    const now = Date.now();
+    if (now - this.lastFirefishRecompute < 60_000) {
+      return;
+    }
+    this.lastFirefishRecompute = now;
+    try {
+      const ffTxids = await $getFirefishTxids();
+      for (const block of this.blocks) {
+        if (!block || !block.id || !block.extras) {
+          continue;
         }
+        let txids = this.firefishBlockTxids.get(block.id);
+        if (!txids) {
+          txids = await bitcoinApi.$getTxIdsForBlock(block.id);
+          this.firefishBlockTxids.set(block.id, txids);
+        }
+        let count = 0;
+        for (const t of txids) {
+          if (ffTxids.has(t)) { count++; }
+        }
+        block.extras.firefishTxCount = count;
       }
+      // drop cached txids for blocks no longer in the recent list
+      const live = new Set(this.blocks.map((b) => b.id));
+      for (const hash of this.firefishBlockTxids.keys()) {
+        if (!live.has(hash)) { this.firefishBlockTxids.delete(hash); }
+      }
+    } catch (e) {
+      logger.debug('[firefish] recompute counts failed: ' + (e instanceof Error ? e.message : e));
     }
-    return changed;
   }
 
   public getBlockSummaries(): BlockSummary[] {
@@ -428,9 +450,15 @@ class Blocks {
     // intact; the chain blocks render their "fullness" from this count relative to a recent maximum.
     if (FIREFISH_ADDRESSES.length) {
       try {
-        await $refreshFirefishForBlock();                 // pull this block's FF txs into the index
-        registerBlockPrefunds(transactions, block.height); // seed same-block prefunds (co-confirmed)
-        extras.firefishTxCount = getFirefishCountForHeight(block.height);
+        registerBlockPrefunds(transactions); // record this block's escrow-setup parents as prefunds
+        const ffTxids = await $getFirefishTxids();
+        let ffCount = 0;
+        for (const tx of transactions) {
+          if (ffTxids.has(tx.txid)) {
+            ffCount++;
+          }
+        }
+        extras.firefishTxCount = ffCount;
       } catch (e) {
         logger.debug('[firefish] failed to count block firefish txs: ' + (e instanceof Error ? e.message : e));
       }

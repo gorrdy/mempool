@@ -270,7 +270,7 @@ class Server {
       const latestAccelerations = await accelerationApi.$updateAccelerations();
       const numHandledBlocks = await blocks.$updateBlocks();
       if (FIREFISH_ADDRESSES.length) {
-        blocks.recomputeFirefishCounts(); // catch up cached blocks' Firefish counts as the index updates
+        void blocks.$recomputeFirefishCounts(); // catch up cached blocks' Firefish counts (throttled)
       }
       const pollRate = config.MEMPOOL.POLL_RATE_MS * (indexer.indexerIsRunning() ? 10 : 1);
       if (numHandledBlocks === 0) {
