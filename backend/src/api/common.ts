@@ -9,7 +9,7 @@ import { isPoint } from '../utils/secp256k1';
 import logger from '../logger';
 import { getVarIntLength, opcodes, parseMultisigScript } from '../utils/bitcoin-script';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
-import { getPrefundTxids } from './firefish';
+import { getEscrowPrefundTxids, getTopupPrefundTxids } from './firefish';
 
 // Bitcoin Core default policy settings
 const MAX_STANDARD_TX_WEIGHT = 400_000;
@@ -634,10 +634,15 @@ export class Common {
         break;
       }
     }
-    // [firefish] PREFUND_TX: parent of an escrow-setup (txid-based, from the cached prefund set)
+    // [firefish] PREFUND: parent that funds an escrow-setup (firefish_prefund) or a top-up
+    // (firefish_prefund_topup), txid-based from the cached prefund sets.
     flags &= ~TransactionFlags.firefish_prefund;
-    if (getPrefundTxids().has(tx.txid)) {
+    flags &= ~TransactionFlags.firefish_prefund_topup;
+    if (getEscrowPrefundTxids().has(tx.txid)) {
       flags |= TransactionFlags.firefish_prefund;
+    }
+    if (getTopupPrefundTxids().has(tx.txid)) {
+      flags |= TransactionFlags.firefish_prefund_topup;
     }
 
     // Already processed static flags, no need to do it again

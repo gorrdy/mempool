@@ -24,27 +24,35 @@ const BACKFILL_CONCURRENCY = 32;
 // they are always consistent. The set has two parts:
 //  - addressTxids: txs touching a Firefish address, from the Electrum/Fulcrum address index (cheap,
 //    refreshed on a throttle).
-//  - prefundTxids: parents of escrow-setups (their output funds the escrow-setup's input). These
-//    don't touch a Firefish address, so they are discovered from escrow-setups: backfilled once over
-//    the full history (persisted to disk) and seeded live as new blocks are processed.
+//  - prefund txids: parents of escrow-setups / top-ups (their output funds that tx's input). These
+//    don't touch a Firefish address, so they are discovered from the escrow-setups/top-ups:
+//    backfilled once over the full history (persisted to disk) and seeded live as blocks are
+//    processed. They are split by what they fund: escrowPrefundTxids (fund an escrow-setup) vs
+//    topupPrefundTxids (fund a top-up), so the two can be labelled distinctly.
 let addressTxids: Set<string> = new Set();
-let prefundTxids: Set<string> = new Set();
+let escrowPrefundTxids: Set<string> = new Set();
+let topupPrefundTxids: Set<string> = new Set();
 
 let addressRefreshTime = 0;
 let backfillDone = false;
 let backfillRunning = false;
 
-// A "true" escrow-setup (escrow creation) sends a non-dust amount (>= 512 sats) to the escrow
-// (escrow-fee-bump) address — that big output is the escrow. A top-up sends only dust (< 512) there,
-// so it's a fee bump on an existing escrow, not escrow creation. Only escrow-setups yield a prefund
-// (their funding input), so a top-up's funder must NOT be tracked as a prefund.
-function isEscrowSetup(tx: any): boolean {
+// Classify a tx by its output to the escrow (escrow-fee-bump) address:
+//  - 'escrow': a non-dust (>= 512 sats) output — that big output IS the escrow => escrow-setup.
+//  - 'topup': only a dust (< 512 sats) output — a fee bump on an existing escrow.
+//  - null: no escrow-fee-bump output.
+// In both the 'escrow' and 'topup' cases the tx's funding input is a prefund (distinguished by kind).
+function escrowFundingKind(tx: any): 'escrow' | 'topup' | null {
+  let topup = false;
   for (const vout of tx.vout || []) {
-    if (vout.scriptpubkey_address === FIREFISH_ADDRESSES[1] && vout.value >= DUST_MAX_SATS) {
-      return true;
+    if (vout.scriptpubkey_address === FIREFISH_ADDRESSES[1] && vout.value > 0) {
+      if (vout.value >= DUST_MAX_SATS) {
+        return 'escrow'; // a big escrow-fee-bump output wins => escrow-setup
+      }
+      topup = true;
     }
   }
-  return false;
+  return topup ? 'topup' : null;
 }
 
 // ---- persistence (the expensive prefund backfill is cached so restarts are instant) ------------
@@ -52,10 +60,11 @@ function loadIndexFromDisk(): void {
   try {
     if (!fs.existsSync(INDEX_FILE)) { return; }
     const raw = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
-    if (raw && Array.isArray(raw.prefunds)) {
-      prefundTxids = new Set<string>(raw.prefunds);
+    if (raw && (Array.isArray(raw.escrowPrefunds) || Array.isArray(raw.topupPrefunds))) {
+      escrowPrefundTxids = new Set<string>(raw.escrowPrefunds || []);
+      topupPrefundTxids = new Set<string>(raw.topupPrefunds || []);
       backfillDone = !!raw.backfillDone;
-      logger.info(`[firefish] loaded ${prefundTxids.size} prefunds from disk (backfillDone=${backfillDone})`);
+      logger.info(`[firefish] loaded ${escrowPrefundTxids.size} escrow + ${topupPrefundTxids.size} top-up prefunds from disk (backfillDone=${backfillDone})`);
     }
   } catch (e) {
     logger.warn('[firefish] failed to load index from disk: ' + (e instanceof Error ? e.message : e));
@@ -64,7 +73,7 @@ function loadIndexFromDisk(): void {
 
 function saveIndexToDisk(): void {
   try {
-    const obj = { backfillDone, prefunds: [...prefundTxids] };
+    const obj = { backfillDone, escrowPrefunds: [...escrowPrefundTxids], topupPrefunds: [...topupPrefundTxids] };
     fs.writeFileSync(INDEX_FILE, JSON.stringify(obj));
   } catch (e) {
     logger.warn('[firefish] failed to save index to disk: ' + (e instanceof Error ? e.message : e));
@@ -107,21 +116,23 @@ async function $backfillPrefunds(): Promise<void> {
       } catch (e) {
         return;
       }
-      if (isEscrowSetup(tx)) {
+      const kind = escrowFundingKind(tx);
+      if (kind) {
+        const set = kind === 'escrow' ? escrowPrefundTxids : topupPrefundTxids;
         for (const vin of tx.vin || []) {
           if (vin.txid) {
-            prefundTxids.add(vin.txid);
+            set.add(vin.txid);
           }
         }
       }
       processed++;
       if (processed % 5000 === 0) {
-        logger.info(`[firefish] prefund backfill ${processed}/${txids.length} (${prefundTxids.size} prefunds)`);
+        logger.info(`[firefish] prefund backfill ${processed}/${txids.length} (${escrowPrefundTxids.size} escrow + ${topupPrefundTxids.size} top-up)`);
       }
     })));
     backfillDone = true;
     saveIndexToDisk();
-    logger.info(`[firefish] prefund backfill complete: ${prefundTxids.size} prefunds`);
+    logger.info(`[firefish] prefund backfill complete: ${escrowPrefundTxids.size} escrow + ${topupPrefundTxids.size} top-up prefunds`);
   } catch (e) {
     logger.warn('[firefish] prefund backfill failed: ' + (e instanceof Error ? e.message : e));
   } finally {
@@ -147,31 +158,38 @@ export async function $getFirefishTxids(): Promise<Set<string>> {
   if (!FIREFISH_ADDRESSES.length) { return new Set(); }
   await $refreshAddressIndex();
   const result = new Set<string>(addressTxids);
-  for (const t of prefundTxids) {
+  for (const t of escrowPrefundTxids) {
+    result.add(t);
+  }
+  for (const t of topupPrefundTxids) {
     result.add(t);
   }
   return result;
 }
 
-// Sync accessor for the prefund txid set (used by getTransactionFlags for the PREFUND_TX label and
-// by the mempool filter).
-export function getPrefundTxids(): Set<string> {
-  return prefundTxids;
+// Sync accessors for the prefund txid sets, used by getTransactionFlags (to label PREFUND_ESCROW vs
+// PREFUND_TOPUP) and by the mempool filter.
+export function getEscrowPrefundTxids(): Set<string> {
+  return escrowPrefundTxids;
+}
+export function getTopupPrefundTxids(): Set<string> {
+  return topupPrefundTxids;
 }
 
-// Seed prefunds from a block as it is processed: the input txids of any escrow-setup in the block
-// are prefunds. Catches prefunds of new escrow-setups (same-block or earlier) without waiting for a
-// re-backfill. Height is irrelevant — membership in the set is what counts.
+// Seed prefunds from a block as it is processed: the input txids of any escrow-setup / top-up in the
+// block are prefunds (recorded by kind). Catches prefunds of new escrow-setups/top-ups without
+// waiting for a re-backfill. Height is irrelevant — membership in the set is what counts.
 export function registerBlockPrefunds(transactions: any[]): void {
   if (!FIREFISH_ADDRESSES.length || !transactions || !transactions.length) { return; }
   let changed = false;
   for (const tx of transactions) {
-    if (isEscrowSetup(tx)) {
-      for (const vin of tx.vin || []) {
-        if (vin.txid && !prefundTxids.has(vin.txid)) {
-          prefundTxids.add(vin.txid);
-          changed = true;
-        }
+    const kind = escrowFundingKind(tx);
+    if (!kind) { continue; }
+    const set = kind === 'escrow' ? escrowPrefundTxids : topupPrefundTxids;
+    for (const vin of tx.vin || []) {
+      if (vin.txid && !set.has(vin.txid)) {
+        set.add(vin.txid);
+        changed = true;
       }
     }
   }

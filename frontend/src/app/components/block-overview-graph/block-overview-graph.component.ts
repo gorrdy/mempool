@@ -531,7 +531,8 @@ export class BlockOverviewGraphComponent implements AfterViewInit, OnDestroy, On
     if (f & TransactionFlags.firefish_repayment) { return 'REPAYMENT'; }
     if (f & TransactionFlags.firefish_top_up) { return 'TOP_UP'; }
     if (f & TransactionFlags.firefish_escrow_setup) { return 'ESCROW_SETUP'; }
-    if (f & TransactionFlags.firefish_prefund) { return 'PREFUND'; }
+    if (f & TransactionFlags.firefish_prefund) { return 'PREFUND_ESCROW'; }
+    if (f & TransactionFlags.firefish_prefund_topup) { return 'PREFUND_TOPUP'; }
     return null;
   }
 

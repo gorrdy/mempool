@@ -49,7 +49,7 @@ import aboutRoutes from './api/about.routes';
 import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
-import { FIREFISH_ADDRESSES, getPrefundTxids, $updateFirefishIndex } from './api/firefish';
+import { FIREFISH_ADDRESSES, getEscrowPrefundTxids, getTopupPrefundTxids, $updateFirefishIndex } from './api/firefish';
 
 class Server {
   private wss: WebSocket.Server | undefined;
@@ -259,8 +259,9 @@ class Server {
         void $updateFirefishIndex(); // throttled address-index refresh + one-time prefund backfill
         try {
           const ffTxids = new Set<string>(await (bitcoinApi as any).$getMempoolTxidsForAddresses(FIREFISH_ADDRESSES));
-          const prefunds = getPrefundTxids();
-          newMempool = newMempool.filter((txid) => ffTxids.has(txid) || prefunds.has(txid));
+          const escrowPrefunds = getEscrowPrefundTxids();
+          const topupPrefunds = getTopupPrefundTxids();
+          newMempool = newMempool.filter((txid) => ffTxids.has(txid) || escrowPrefunds.has(txid) || topupPrefunds.has(txid));
         } catch (e) {
           logger.warn('[firefish] address filter failed, keeping full mempool this cycle: ' + (e instanceof Error ? e.message : e));
         }

@@ -302,8 +302,10 @@ export const TransactionFlags = {
   firefish_tedsig: 0b10000000_00000000_00000000_00000000_00000000_00000000n,
   // [firefish] TOP_UP: dust output to the escrow-fee-bump address
   firefish_top_up: 0b00000001_00000000_00000000_00000000_00000000_00000000_00000000n,
-  // [firefish] PREFUND_TX: parent of an escrow-setup (its output funds the escrow-setup's input)
+  // [firefish] PREFUND (escrow): parent that funds an escrow-setup's input
   firefish_prefund: 0b00000010_00000000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] PREFUND (top-up): parent that funds a top-up's input
+  firefish_prefund_topup: 0b00000100_00000000_00000000_00000000_00000000_00000000_00000000n,
 };
 
 export interface BlockExtension {

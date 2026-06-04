@@ -8,7 +8,8 @@ const firefishRepaymentColor: Color = { r: 0.13, g: 0.82, b: 0.55, a: 1 }; // te
 const firefishEscrowSetupColor: Color = { r: 0.95, g: 0.55, b: 0.15, a: 1 }; // amber/orange
 const firefishTedsigColor: Color = { r: 0.60, g: 0.40, b: 0.95, a: 1 }; // violet
 const firefishTopUpColor: Color = { r: 0.20, g: 0.65, b: 0.95, a: 1 }; // blue
-const firefishPrefundColor: Color = { r: 0.95, g: 0.30, b: 0.60, a: 1 }; // pink
+const firefishPrefundColor: Color = { r: 0.95, g: 0.30, b: 0.60, a: 1 }; // pink (prefund -> escrow)
+const firefishPrefundTopupColor: Color = { r: 0.95, g: 0.55, b: 0.35, a: 1 }; // coral (prefund -> top-up)
 
 export function hexToColor(hex: string): Color {
   return {
@@ -155,6 +156,9 @@ export function defaultColorFunction(
     }
     if (tx.bigintFlags & TransactionFlags.firefish_prefund) {
       return firefishPrefundColor;
+    }
+    if (tx.bigintFlags & TransactionFlags.firefish_prefund_topup) {
+      return firefishPrefundTopupColor;
     }
   }
   // Normal mode

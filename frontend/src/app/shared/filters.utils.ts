@@ -65,8 +65,10 @@ export const TransactionFlags = {
   firefish_tedsig: 0b10000000_00000000_00000000_00000000_00000000_00000000n,
   // [firefish] TOP_UP: dust output to the escrow-fee-bump address
   firefish_top_up: 0b00000001_00000000_00000000_00000000_00000000_00000000_00000000n,
-  // [firefish] PREFUND_TX: parent of an escrow-setup
+  // [firefish] PREFUND (escrow): parent that funds an escrow-setup
   firefish_prefund: 0b00000010_00000000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] PREFUND (top-up): parent that funds a top-up
+  firefish_prefund_topup: 0b00000100_00000000_00000000_00000000_00000000_00000000_00000000n,
 };
 
 export function toFlags(filters: string[]): bigint {
@@ -129,7 +131,8 @@ export const TransactionFilters: { [key: string]: Filter } = {
     firefish_escrow_setup: { key: 'firefish_escrow_setup', label: 'ESCROW_SETUP', flag: TransactionFlags.firefish_escrow_setup, important: true, tooltip: true, txPage: true, },
     firefish_tedsig: { key: 'firefish_tedsig', label: 'TEDSIG', flag: TransactionFlags.firefish_tedsig, important: true, tooltip: true, txPage: true, },
     firefish_top_up: { key: 'firefish_top_up', label: 'TOP_UP', flag: TransactionFlags.firefish_top_up, important: true, tooltip: true, txPage: true, },
-    firefish_prefund: { key: 'firefish_prefund', label: 'PREFUND_TX', flag: TransactionFlags.firefish_prefund, important: true, tooltip: true, txPage: true, },
+    firefish_prefund: { key: 'firefish_prefund', label: 'PREFUND_ESCROW', flag: TransactionFlags.firefish_prefund, important: true, tooltip: true, txPage: true, },
+    firefish_prefund_topup: { key: 'firefish_prefund_topup', label: 'PREFUND_TOPUP', flag: TransactionFlags.firefish_prefund_topup, important: true, tooltip: true, txPage: true, },
 };
 
 export const FilterGroups: { label: string, filters: Filter[]}[] = [
@@ -139,5 +142,5 @@ export const FilterGroups: { label: string, filters: Filter[]}[] = [
   { label: $localize`Data`, filters: ['op_return', 'fake_pubkey', 'fake_scripthash', 'inscription', 'annex'] },
   { label: $localize`Heuristics`, filters: ['coinjoin', 'consolidation', 'batch_payout'] },
   { label: $localize`Sighash Flags`, filters: ['sighash_all', 'sighash_none', 'sighash_single', 'sighash_default', 'sighash_acp'] },
-  { label: 'Firefish', filters: ['firefish_repayment', 'firefish_escrow_setup', 'firefish_top_up', 'firefish_tedsig', 'firefish_prefund'] },
+  { label: 'Firefish', filters: ['firefish_repayment', 'firefish_escrow_setup', 'firefish_top_up', 'firefish_tedsig', 'firefish_prefund', 'firefish_prefund_topup'] },
 ].map(group => ({ label: group.label, filters: group.filters.map(filter => TransactionFilters[filter] || null).filter(f => f != null) }));
