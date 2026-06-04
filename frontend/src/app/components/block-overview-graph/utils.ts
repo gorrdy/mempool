@@ -3,8 +3,10 @@ import { Color } from '@components/block-overview-graph/sprite-types';
 import TxView from '@components/block-overview-graph/tx-view';
 import { TransactionFlags } from '@app/shared/filters.utils';
 
-// [firefish] distinct colour for repayment (escrow-closing) transactions
+// [firefish] distinct colours per firefish tx type
 const firefishRepaymentColor: Color = { r: 0.13, g: 0.82, b: 0.55, a: 1 }; // teal-green
+const firefishEscrowSetupColor: Color = { r: 0.95, g: 0.55, b: 0.15, a: 1 }; // amber/orange
+const firefishTedsigColor: Color = { r: 0.60, g: 0.40, b: 0.95, a: 1 }; // violet
 
 export function hexToColor(hex: string): Color {
   return {
@@ -135,9 +137,17 @@ export function defaultColorFunction(
   const rate = tx.fee / tx.vsize; // color by simple single-tx fee rate
   const levelIndex = colors.baseLevel(tx, rate, relativeTime || (Date.now() / 1000));
   const levelColor = colors.base[levelIndex] || colors.base[defaultMempoolFeeColors.length - 1];
-  // [firefish] repayment (escrow-closing) txs get a distinct colour, in every mode
-  if (tx.bigintFlags && (tx.bigintFlags & TransactionFlags.firefish_repayment)) {
-    return firefishRepaymentColor;
+  // [firefish] colour by firefish tx type, in every mode (tedsig > repayment > escrow setup)
+  if (tx.bigintFlags) {
+    if (tx.bigintFlags & TransactionFlags.firefish_tedsig) {
+      return firefishTedsigColor;
+    }
+    if (tx.bigintFlags & TransactionFlags.firefish_repayment) {
+      return firefishRepaymentColor;
+    }
+    if (tx.bigintFlags & TransactionFlags.firefish_escrow_setup) {
+      return firefishEscrowSetupColor;
+    }
   }
   // Normal mode
   if (!tx.scene?.highlightingEnabled) {

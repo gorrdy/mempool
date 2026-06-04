@@ -59,6 +59,10 @@ export const TransactionFlags = {
   sighash_acp:    0b00010000_00000000_00000000_00000000_00000000_00000000n,
   // [firefish] repayment (escrow closing): dust output to the fee-bump address
   firefish_repayment: 0b00100000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] escrow setup (escrow creation): firefish-related tx that is not a repayment
+  firefish_escrow_setup: 0b01000000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] TEDSIG: tx spends from the liquidator (escrow) address
+  firefish_tedsig: 0b10000000_00000000_00000000_00000000_00000000_00000000n,
 };
 
 export function toFlags(filters: string[]): bigint {
@@ -116,6 +120,10 @@ export const TransactionFilters: { [key: string]: Filter } = {
     sighash_single: { key: 'sighash_single', label: 'sighash_single', flag: TransactionFlags.sighash_single, tooltip: true },
     sighash_default: { key: 'sighash_default', label: 'sighash_default', flag: TransactionFlags.sighash_default },
     sighash_acp: { key: 'sighash_acp', label: 'sighash_anyonecanpay', flag: TransactionFlags.sighash_acp, tooltip: true },
+    /* firefish */
+    firefish_repayment: { key: 'firefish_repayment', label: 'REPAYMENT', flag: TransactionFlags.firefish_repayment, important: true, tooltip: true, txPage: true, },
+    firefish_escrow_setup: { key: 'firefish_escrow_setup', label: 'ESCROW_SETUP', flag: TransactionFlags.firefish_escrow_setup, important: true, tooltip: true, txPage: true, },
+    firefish_tedsig: { key: 'firefish_tedsig', label: 'TEDSIG', flag: TransactionFlags.firefish_tedsig, important: true, tooltip: true, txPage: true, },
 };
 
 export const FilterGroups: { label: string, filters: Filter[]}[] = [
@@ -125,4 +133,5 @@ export const FilterGroups: { label: string, filters: Filter[]}[] = [
   { label: $localize`Data`, filters: ['op_return', 'fake_pubkey', 'fake_scripthash', 'inscription', 'annex'] },
   { label: $localize`Heuristics`, filters: ['coinjoin', 'consolidation', 'batch_payout'] },
   { label: $localize`Sighash Flags`, filters: ['sighash_all', 'sighash_none', 'sighash_single', 'sighash_default', 'sighash_acp'] },
+  { label: 'Firefish', filters: ['firefish_repayment', 'firefish_escrow_setup', 'firefish_tedsig'] },
 ].map(group => ({ label: group.label, filters: group.filters.map(filter => TransactionFilters[filter] || null).filter(f => f != null) }));

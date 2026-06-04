@@ -623,6 +623,16 @@ export class Common {
     if (tx.replacement) {
       flags |= TransactionFlags.replacement;
     }
+    // [firefish] TEDSIG: tx spends FROM the liquidator (escrow) address. Input-based, so it needs
+    // prevout addresses (not always present) — recompute it each call alongside the variable flags.
+    flags &= ~TransactionFlags.firefish_tedsig;
+    const FIREFISH_LIQUIDATOR_ADDRESS = 'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z';
+    for (const vin of tx.vin || []) {
+      if (vin.prevout?.scriptpubkey_address === FIREFISH_LIQUIDATOR_ADDRESS) {
+        flags |= TransactionFlags.firefish_tedsig;
+        break;
+      }
+    }
 
     // Already processed static flags, no need to do it again
     if (tx.flags) {
@@ -637,15 +647,32 @@ export class Common {
     } else if (tx.version === 3) {
       flags |= TransactionFlags.v3;
     }
-    // [firefish] flag repayment (escrow-closing) txs: they pay only a dust output (typ. ~294/295,
-    // generally < 512 sats) to the fee-bump address, unlike escrow-creation txs.
+    // [firefish] classify firefish txs by their outputs:
+    //  - REPAYMENT (escrow closing): a dust output (< 512 sats, typ. ~294/295) to the fee-bump address
+    //  - ESCROW_SETUP (escrow creation): any other tx with an output to a firefish address
     const FIREFISH_FEE_BUMP_ADDRESS = 'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl';
+    const FIREFISH_ADDRESSES = [
+      FIREFISH_FEE_BUMP_ADDRESS,
+      'bc1qy020q6fn5tyv28gh22mnhl7s5eqd7jew5jmp4v',
+      'bc1qa2zns3cjnw4jqsu2ylqp3szt3puvvjmfggdp46hv9qx5t4qjyxyq603s6z',
+    ];
     const FIREFISH_REPAYMENT_MAX_SATS = 512;
+    let firefishRepayment = false;
+    let firefishOutput = false;
     for (const vout of tx.vout || []) {
-      if (vout.scriptpubkey_address === FIREFISH_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_REPAYMENT_MAX_SATS) {
-        flags |= TransactionFlags.firefish_repayment;
-        break;
+      const addr = vout.scriptpubkey_address;
+      if (!addr) { continue; }
+      if (addr === FIREFISH_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_REPAYMENT_MAX_SATS) {
+        firefishRepayment = true;
       }
+      if (FIREFISH_ADDRESSES.includes(addr)) {
+        firefishOutput = true;
+      }
+    }
+    if (firefishRepayment) {
+      flags |= TransactionFlags.firefish_repayment;
+    } else if (firefishOutput) {
+      flags |= TransactionFlags.firefish_escrow_setup;
     }
     const reusedInputAddresses: { [address: string ]: number } = {};
     const reusedOutputAddresses: { [address: string ]: number } = {};

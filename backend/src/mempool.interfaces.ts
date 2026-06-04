@@ -296,6 +296,10 @@ export const TransactionFlags = {
   sighash_acp:    0b00010000_00000000_00000000_00000000_00000000_00000000n,
   // [firefish] repayment (escrow closing): dust output to the fee-bump address
   firefish_repayment: 0b00100000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] escrow setup (escrow creation): firefish-related tx that is not a repayment
+  firefish_escrow_setup: 0b01000000_00000000_00000000_00000000_00000000_00000000n,
+  // [firefish] TEDSIG: tx spends from the liquidator (escrow) address
+  firefish_tedsig: 0b10000000_00000000_00000000_00000000_00000000_00000000n,
 };
 
 export interface BlockExtension {
