@@ -6,7 +6,7 @@ import { BlockExtended, BlockExtension, BlockSummary, PoolTag, TransactionExtend
 import { Common } from './common';
 import diskCache from './disk-cache';
 import transactionUtils from './transaction-utils';
-import { FIREFISH_ADDRESSES, $getFirefishTxids } from './firefish';
+import { FIREFISH_ADDRESSES, $getFirefishTxids, registerBlockPrefunds } from './firefish';
 import bitcoinClient from './bitcoin/bitcoin-client';
 import { IBitcoinApi } from './bitcoin/bitcoin-api.interface';
 import { IEsploraApi } from './bitcoin/esplora-api.interface';
@@ -408,6 +408,9 @@ class Blocks {
     // firefishWeight lets the chain blocks render their "fullness" from the Firefish content only.
     if (FIREFISH_ADDRESSES.length) {
       try {
+        // seed prefund txs (escrow-setup parents) from this block before counting, so the count
+        // includes them and stays consistent with the block view (prefund is co-confirmed)
+        registerBlockPrefunds(transactions);
         const ffTxids = await $getFirefishTxids();
         let ffCount = 0;
         let ffWeight = 0;

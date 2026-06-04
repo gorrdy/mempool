@@ -21,26 +21,33 @@ export async function $getFirefishTxids(): Promise<Set<string>> {
     return new Set();
   }
   const now = Date.now();
+  let addr: Set<string> | undefined;
   if (txidCache && (now - txidCache.time) < TXID_CACHE_TTL_MS) {
-    return txidCache.txids;
-  }
-  try {
-    const fn = (bitcoinApi as any).$getTxidsForAddresses;
-    if (typeof fn === 'function') {
-      const txids = new Set<string>(await fn.call(bitcoinApi, FIREFISH_ADDRESSES));
-      // NOTE: prefund txs are intentionally NOT added here. This set drives the *confirmed block*
-      // filter and firefishTxCount, which is fixed when a block is processed — but a prefund is
-      // only discovered later (once its escrow-setup exists), so including it here makes a block's
-      // preview show more txs than its (already-stored) count. Prefunds are tracked in the mempool
-      // filter (see index.ts) instead, where the prefund -> escrow-setup chain forms live.
-      txidCache = { txids, time: now };
-      return txids;
+    addr = txidCache.txids;
+  } else {
+    try {
+      const fn = (bitcoinApi as any).$getTxidsForAddresses;
+      if (typeof fn === 'function') {
+        addr = new Set<string>(await fn.call(bitcoinApi, FIREFISH_ADDRESSES));
+        txidCache = { txids: addr, time: now };
+      }
+    } catch (e) {
+      logger.warn('[firefish] $getFirefishTxids failed: ' + (e instanceof Error ? e.message : e));
     }
-  } catch (e) {
-    logger.warn('[firefish] $getFirefishTxids failed: ' + (e instanceof Error ? e.message : e));
   }
-  // fall back to the last known set rather than hiding everything on a transient failure
-  return txidCache?.txids || new Set();
+  // fall back to the last known address set rather than hiding everything on a transient failure
+  if (!addr) {
+    addr = txidCache?.txids || new Set();
+  }
+  // Union the tracked prefund txs (parents of escrow-setups). A prefund is co-confirmed with its
+  // escrow-setup (the escrow-setup is a CPFP child paying for the prefund), so it is seeded into the
+  // prefund set the moment its block is processed (see registerBlockPrefunds), keeping it consistent
+  // with that block's firefishTxCount and shown in both the mempool and confirmed blocks.
+  const result = new Set<string>(addr);
+  for (const t of prefundTxids) {
+    result.add(t);
+  }
+  return result;
 }
 
 // ---- PREFUND tracking -------------------------------------------------------------------------
@@ -111,8 +118,32 @@ export async function $refreshPrefundTxids(): Promise<void> {
         }
       }
     }
-    prefundTxids = set;
+    // merge (don't replace): prefunds seeded from confirmed blocks must not be dropped when they
+    // fall outside this recent scan window
+    for (const t of set) {
+      prefundTxids.add(t);
+    }
   } catch (e) {
     logger.warn('[firefish] $refreshPrefundTxids failed: ' + (e instanceof Error ? e.message : e));
+  }
+}
+
+// Seed the prefund set from a confirmed block: any input of an escrow-setup that is itself a tx in
+// the same block is a prefund (its output funds that escrow-setup's input). Called when a block is
+// processed so the prefund is recognised immediately — keeping firefishTxCount and the block view
+// consistent without waiting for the periodic scan.
+export function registerBlockPrefunds(transactions: any[]): void {
+  if (!FIREFISH_ADDRESSES.length || !transactions || !transactions.length) {
+    return;
+  }
+  const blockTxids = new Set<string>(transactions.map((t) => t.txid));
+  for (const tx of transactions) {
+    if (isEscrowSetup(tx)) {
+      for (const vin of tx.vin || []) {
+        if (vin.txid && blockTxids.has(vin.txid)) {
+          prefundTxids.add(vin.txid);
+        }
+      }
+    }
   }
 }
