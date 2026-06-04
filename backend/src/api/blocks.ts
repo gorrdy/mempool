@@ -302,18 +302,10 @@ class Blocks {
   // a remote backend): intersect the block's txids with the Firefish set and fetch only those few.
   public async $getFirefishStrippedBlockTransactions(hash: string): Promise<TransactionClassified[]> {
     const ffTxids = await $getFirefishTxids();
-    // fast path: a cached or indexed full summary already exists — just filter it
-    const cached = this.getBlockSummaries().find((b) => b.id === hash);
-    if (cached?.transactions?.length) {
-      return cached.transactions.filter((tx) => ffTxids.has(tx.txid));
-    }
-    if (Common.blocksSummariesIndexingEnabled() === true) {
-      const indexed = await BlocksSummariesRepository.$getByBlockId(hash);
-      if (indexed !== undefined && indexed?.transactions?.length) {
-        return indexed.transactions.filter((tx) => ffTxids.has(tx.txid));
-      }
-    }
-    // otherwise build a summary from only the Firefish txs in the block
+    // Always build from only the Firefish txs in the block, rather than filtering a cached/indexed
+    // full summary. Cached summaries can carry stale classifications (e.g. a PREFUND flag that was
+    // only discovered after the block was first summarized, or summaries indexed before the Firefish
+    // flags existed). There are few Firefish txs per block, so rebuilding is cheap and always current.
     const blockTxids = await bitcoinApi.$getTxIdsForBlock(hash);
     const ffInBlock = blockTxids.filter((txid) => ffTxids.has(txid));
     if (!ffInBlock.length) {
