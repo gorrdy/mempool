@@ -427,11 +427,14 @@ class BitcoinRoutes {
       return;
     }
     try {
-      let transactions = await blocks.$getStrippedBlockTransactions(req.params.hash);
-      // [firefish] show only Firefish transactions in mined blocks
+      let transactions;
+      // [firefish] show only Firefish transactions in mined blocks. Use the Firefish-aware path so
+      // even old blocks (not in the recent cache) are built from just their Firefish txs instead of
+      // fetching the whole block (which times out over a remote backend).
       if (FIREFISH_ADDRESSES.length) {
-        const ffTxids = await $getFirefishTxids();
-        transactions = transactions.filter((tx) => ffTxids.has(tx.txid));
+        transactions = await blocks.$getFirefishStrippedBlockTransactions(req.params.hash);
+      } else {
+        transactions = await blocks.$getStrippedBlockTransactions(req.params.hash);
       }
       res.setHeader('Expires', new Date(Date.now() + 1000 * 3600 * 24 * 30).toUTCString());
       res.json(transactions);

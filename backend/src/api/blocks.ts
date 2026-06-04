@@ -6,6 +6,7 @@ import { BlockExtended, BlockExtension, BlockSummary, PoolTag, TransactionExtend
 import { Common } from './common';
 import diskCache from './disk-cache';
 import transactionUtils from './transaction-utils';
+import pLimit from '../utils/p-limit';
 import { FIREFISH_ADDRESSES, registerBlockPrefunds, $getFirefishTxids } from './firefish';
 import bitcoinClient from './bitcoin/bitcoin-client';
 import { IBitcoinApi } from './bitcoin/bitcoin-api.interface';
@@ -294,6 +295,49 @@ class Blocks {
       id: hash,
       transactions: Common.classifyTransactions(transactions, height),
     };
+  }
+
+  // [firefish] Build a block's stripped summary from ONLY its Firefish transactions. For blocks not
+  // in the recent cache this avoids fetching the whole block (thousands of txs, which times out over
+  // a remote backend): intersect the block's txids with the Firefish set and fetch only those few.
+  public async $getFirefishStrippedBlockTransactions(hash: string): Promise<TransactionClassified[]> {
+    const ffTxids = await $getFirefishTxids();
+    // fast path: a cached or indexed full summary already exists — just filter it
+    const cached = this.getBlockSummaries().find((b) => b.id === hash);
+    if (cached?.transactions?.length) {
+      return cached.transactions.filter((tx) => ffTxids.has(tx.txid));
+    }
+    if (Common.blocksSummariesIndexingEnabled() === true) {
+      const indexed = await BlocksSummariesRepository.$getByBlockId(hash);
+      if (indexed !== undefined && indexed?.transactions?.length) {
+        return indexed.transactions.filter((tx) => ffTxids.has(tx.txid));
+      }
+    }
+    // otherwise build a summary from only the Firefish txs in the block
+    const blockTxids = await bitcoinApi.$getTxIdsForBlock(hash);
+    const ffInBlock = blockTxids.filter((txid) => ffTxids.has(txid));
+    if (!ffInBlock.length) {
+      return [];
+    }
+    let height: number;
+    const orphanedBlock = chainTips.getOrphanedBlock(hash);
+    if (orphanedBlock) {
+      height = orphanedBlock.height;
+    } else {
+      const block = await bitcoinApi.$getBlock(hash);
+      height = block.height;
+    }
+    const limit = pLimit(16);
+    const extended: TransactionExtended[] = [];
+    await Promise.all(ffInBlock.map((txid) => limit(async () => {
+      try {
+        const tx = await bitcoinApi.$getRawTransaction(txid, true, false); // with prevouts (TEDSIG needs input addresses)
+        extended.push(transactionUtils.extendTransaction(tx));
+      } catch (e) {
+        logger.debug('[firefish] failed to fetch firefish tx for block summary: ' + (e instanceof Error ? e.message : e));
+      }
+    })));
+    return this.summarizeBlockTransactions(hash, height, extended).transactions;
   }
 
   private convertLiquidFees(block: IBitcoinApi.VerboseBlock): IBitcoinApi.VerboseBlock {
