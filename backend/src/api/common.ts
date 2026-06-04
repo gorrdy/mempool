@@ -637,6 +637,16 @@ export class Common {
     } else if (tx.version === 3) {
       flags |= TransactionFlags.v3;
     }
+    // [firefish] flag repayment (escrow-closing) txs: they pay only a dust output (typ. ~294/295,
+    // generally < 512 sats) to the fee-bump address, unlike escrow-creation txs.
+    const FIREFISH_FEE_BUMP_ADDRESS = 'bc1qszttxl5jq5eyydpwvq7a6fa54at7cffp9acpyl';
+    const FIREFISH_REPAYMENT_MAX_SATS = 512;
+    for (const vout of tx.vout || []) {
+      if (vout.scriptpubkey_address === FIREFISH_FEE_BUMP_ADDRESS && vout.value > 0 && vout.value < FIREFISH_REPAYMENT_MAX_SATS) {
+        flags |= TransactionFlags.firefish_repayment;
+        break;
+      }
+    }
     const reusedInputAddresses: { [address: string ]: number } = {};
     const reusedOutputAddresses: { [address: string ]: number } = {};
     const inValues = {};
