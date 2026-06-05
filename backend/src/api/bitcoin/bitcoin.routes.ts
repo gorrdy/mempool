@@ -51,7 +51,7 @@ class BitcoinRoutes {
       .post(config.MEMPOOL.API_URL_PREFIX + 'tx/push', this.$postTransactionForm)
       .get(config.MEMPOOL.API_URL_PREFIX + 'blocks', this.getBlocks.bind(this))
       .get(config.MEMPOOL.API_URL_PREFIX + 'blocks/:height', this.getBlocks.bind(this))
-      .get(config.MEMPOOL.API_URL_PREFIX + 'block/:hash', this.getBlock)
+      .get(config.MEMPOOL.API_URL_PREFIX + 'block/:hash', this.getBlock.bind(this))
       .get(config.MEMPOOL.API_URL_PREFIX + 'block/:hash/summary', this.getStrippedBlockTransactions)
       .get(config.MEMPOOL.API_URL_PREFIX + 'block/:hash/tx/:txid/summary', this.getStrippedBlockTransaction)
       .get(config.MEMPOOL.API_URL_PREFIX + 'block/:hash/audit-summary', this.getBlockAuditSummary)
@@ -475,17 +475,8 @@ class BitcoinRoutes {
 
       // [firefish] make sure the Firefish tx count is present even for old blocks (which aren't in
       // the recompute window) so the block page shows the filtered count, not the full tx_count
-      const blkAny = block as any;
-      if (FIREFISH_ADDRESSES.length && blkAny && (!blkAny.extras || blkAny.extras.firefishTxCount == null)) {
-        try {
-          const ffTxids = await $getFirefishTxids();
-          const blockTxids = await bitcoinApi.$getTxIdsForBlock(req.params.hash);
-          const count = blockTxids.reduce((n, txid) => n + (ffTxids.has(txid) ? 1 : 0), 0);
-          if (!blkAny.extras) { blkAny.extras = {}; }
-          blkAny.extras.firefishTxCount = count;
-        } catch (e) {
-          // leave firefishTxCount unset on failure
-        }
+      if (FIREFISH_ADDRESSES.length) {
+        await this.$ensureFirefishCount(block, await $getFirefishTxids());
       }
 
       const blockAge = new Date().getTime() / 1000 - block.timestamp;
@@ -562,12 +553,38 @@ class BitcoinRoutes {
     }
   }
 
+  // [firefish] ensure a block carries its Firefish tx count. Recent (in-memory) blocks already have
+  // it; older blocks served from the index/DB don't, so compute it on-demand (intersect the block's
+  // txids with the Firefish set) — otherwise the block list falls back to the full tx_count.
+  private async $ensureFirefishCount(block: any, ffTxids: Set<string>): Promise<void> {
+    if (!block || (block.extras && block.extras.firefishTxCount != null)) {
+      return;
+    }
+    try {
+      const txids = await bitcoinApi.$getTxIdsForBlock(block.id);
+      let count = 0;
+      for (const t of txids) {
+        if (ffTxids.has(t)) { count++; }
+      }
+      if (!block.extras) { block.extras = {}; }
+      block.extras.firefishTxCount = count;
+    } catch (e) {
+      // leave firefishTxCount unset on failure
+    }
+  }
+
   private async getBlocks(req: Request, res: Response) {
     try {
       if (['mainnet', 'testnet', 'signet', 'testnet4', 'regtest'].includes(config.MEMPOOL.NETWORK)) { // Bitcoin
         const height = req.params.height === undefined ? undefined : parseInt(req.params.height, 10);
+        const returnBlocks = await blocks.$getBlocks(height, 15);
+        // [firefish] fill in the Firefish tx count for older blocks so the list isn't full tx_counts
+        if (FIREFISH_ADDRESSES.length) {
+          const ffTxids = await $getFirefishTxids();
+          await Promise.all(returnBlocks.map((b) => this.$ensureFirefishCount(b, ffTxids)));
+        }
         res.setHeader('Expires', new Date(Date.now() + 1000 * 60).toUTCString());
-        res.json(await blocks.$getBlocks(height, 15));
+        res.json(returnBlocks);
       } else { // Liquid
         return await this.getLegacyBlocks(req, res);
       }
@@ -684,6 +701,12 @@ class BitcoinRoutes {
           returnBlocks.push(block);
           nextHash = block.previousblockhash;
         }
+      }
+
+      // [firefish] fill in the Firefish tx count for older blocks (recent ones already have it)
+      if (FIREFISH_ADDRESSES.length) {
+        const ffTxids = await $getFirefishTxids();
+        await Promise.all(returnBlocks.map((b) => this.$ensureFirefishCount(b, ffTxids)));
       }
 
       res.setHeader('Expires', new Date(Date.now() + 1000 * 60).toUTCString());
