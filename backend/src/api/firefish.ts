@@ -32,6 +32,8 @@ const BACKFILL_CONCURRENCY = 32;
 let addressTxids: Set<string> = new Set();
 let escrowPrefundTxids: Set<string> = new Set();
 let topupPrefundTxids: Set<string> = new Set();
+// cached union (addressTxids + both prefund sets); invalidated (set null) whenever a set changes
+let firefishUnionCache: Set<string> | null = null;
 
 let addressRefreshTime = 0;
 let backfillDone = false;
@@ -90,6 +92,7 @@ async function $refreshAddressIndex(force = false): Promise<void> {
     const fn = (bitcoinApi as any).$getTxidsForAddresses;
     if (typeof fn !== 'function') { return; }
     addressTxids = new Set<string>(await fn.call(bitcoinApi, FIREFISH_ADDRESSES));
+    firefishUnionCache = null; // address set changed
   } catch (e) {
     logger.warn('[firefish] address index refresh failed: ' + (e instanceof Error ? e.message : e));
   }
@@ -131,6 +134,7 @@ async function $backfillPrefunds(): Promise<void> {
       }
     })));
     backfillDone = true;
+    firefishUnionCache = null; // prefund sets changed
     saveIndexToDisk();
     logger.info(`[firefish] prefund backfill complete: ${escrowPrefundTxids.size} escrow + ${topupPrefundTxids.size} top-up prefunds`);
   } catch (e) {
@@ -157,14 +161,24 @@ export async function $updateFirefishIndex(): Promise<void> {
 export async function $getFirefishTxids(): Promise<Set<string>> {
   if (!FIREFISH_ADDRESSES.length) { return new Set(); }
   await $refreshAddressIndex();
-  const result = new Set<string>(addressTxids);
-  for (const t of escrowPrefundTxids) {
-    result.add(t);
+  return getFirefishTxidsSync();
+}
+
+// Synchronous snapshot of the full Firefish txid set, cached and rebuilt only when a set changes.
+// Used where awaiting isn't convenient (e.g. filtering projected mempool block contents during
+// template building). Read-only — callers must not mutate the returned set.
+export function getFirefishTxidsSync(): Set<string> {
+  if (!firefishUnionCache) {
+    const union = new Set<string>(addressTxids);
+    for (const t of escrowPrefundTxids) {
+      union.add(t);
+    }
+    for (const t of topupPrefundTxids) {
+      union.add(t);
+    }
+    firefishUnionCache = union;
   }
-  for (const t of topupPrefundTxids) {
-    result.add(t);
-  }
-  return result;
+  return firefishUnionCache;
 }
 
 // Sync accessors for the prefund txid sets, used by getTransactionFlags (to label PREFUND_ESCROW vs
@@ -193,8 +207,11 @@ export function registerBlockPrefunds(transactions: any[]): void {
       }
     }
   }
-  if (changed && backfillDone) {
-    saveIndexToDisk();
+  if (changed) {
+    firefishUnionCache = null; // prefund sets changed
+    if (backfillDone) {
+      saveIndexToDisk();
+    }
   }
 }
 

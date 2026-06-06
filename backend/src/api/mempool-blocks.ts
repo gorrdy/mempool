@@ -9,6 +9,7 @@ import mempool from './mempool';
 import { Acceleration } from './services/acceleration';
 import PoolsRepository from '../repositories/PoolsRepository';
 import { ProjectedBlock } from '../cluster-mempool/cluster-mempool';
+import { FIREFISH_ADDRESSES, getFirefishTxidsSync } from './firefish';
 
 const MAX_UINT32 = Math.pow(2, 32) - 1;
 
@@ -666,7 +667,15 @@ class MempoolBlocks {
 
   private dataToMempoolBlocks(transactionIds: string[], transactions: MempoolTransactionExtended[], totalSize: number, totalWeight: number, totalFees: number, feeStats?: EffectiveFeeStats ): MempoolBlockWithTransactions {
     if (!feeStats) {
-      feeStats = Common.calcEffectiveFeeStatistics(transactions);
+      feeStats = Common.calcEffectiveFeeStatistics(transactions); // from the FULL set => real fee stats
+    }
+    // [firefish] the summary (size, vsize, nTx, fees, feeRange) is computed from the full block so the
+    // projected block's fee estimate is real; but only the Firefish transactions are kept for DISPLAY
+    // (the overview squares + deltas), so the projected block shows real fees with Firefish contents.
+    let displayTransactions = transactions;
+    if (FIREFISH_ADDRESSES.length) {
+      const ffTxids = getFirefishTxidsSync();
+      displayTransactions = transactions.filter((tx) => ffTxids.has(tx.txid));
     }
     return {
       blockSize: totalSize,
@@ -676,7 +685,7 @@ class MempoolBlocks {
       medianFee: feeStats.medianFee, // Common.percentile(transactions.map((tx) => tx.effectiveFeePerVsize), config.MEMPOOL.RECOMMENDED_FEE_PERCENTILE),
       feeRange: feeStats.feeRange, //Common.getFeesInRange(transactions, rangeLength),
       transactionIds: transactionIds,
-      transactions: transactions.map((tx) => Common.classifyTransaction(tx)),
+      transactions: displayTransactions.map((tx) => Common.classifyTransaction(tx)),
     };
   }
 

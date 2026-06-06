@@ -49,7 +49,7 @@ import aboutRoutes from './api/about.routes';
 import mempoolBlocks from './api/mempool-blocks';
 import walletApi from './api/services/wallets';
 import stratumApi from './api/services/stratum';
-import { FIREFISH_ADDRESSES, getEscrowPrefundTxids, getTopupPrefundTxids, $updateFirefishIndex } from './api/firefish';
+import { FIREFISH_ADDRESSES, $updateFirefishIndex } from './api/firefish';
 
 class Server {
   private wss: WebSocket.Server | undefined;
@@ -253,18 +253,13 @@ class Server {
           logger.debug(msg);
         }
       }
-      let newMempool = await bitcoinApi.$getRawMempool();
-      // [firefish] restrict the tracked mempool to transactions touching Firefish addresses
-      if (FIREFISH_ADDRESSES.length && typeof (bitcoinApi as any).$getMempoolTxidsForAddresses === 'function') {
+      const newMempool = await bitcoinApi.$getRawMempool();
+      // [firefish] keep the Firefish index fresh, but track the FULL mempool so fee estimates and
+      // the projected mempool blocks are real (they account for non-Firefish txs too). Firefish
+      // filtering is applied to what's DISPLAYED (confirmed blocks, and the projected block contents
+      // in mempool-blocks.ts), not to the tracked mempool.
+      if (FIREFISH_ADDRESSES.length) {
         void $updateFirefishIndex(); // throttled address-index refresh + one-time prefund backfill
-        try {
-          const ffTxids = new Set<string>(await (bitcoinApi as any).$getMempoolTxidsForAddresses(FIREFISH_ADDRESSES));
-          const escrowPrefunds = getEscrowPrefundTxids();
-          const topupPrefunds = getTopupPrefundTxids();
-          newMempool = newMempool.filter((txid) => ffTxids.has(txid) || escrowPrefunds.has(txid) || topupPrefunds.has(txid));
-        } catch (e) {
-          logger.warn('[firefish] address filter failed, keeping full mempool this cycle: ' + (e instanceof Error ? e.message : e));
-        }
       }
       const minFeeMempool = memPool.limitGBT ? await bitcoinSecondClient.getRawMemPool() : null;
       const minFeeTip = memPool.limitGBT ? await bitcoinSecondClient.getBlockCount() : -1;
