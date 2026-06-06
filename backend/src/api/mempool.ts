@@ -13,6 +13,7 @@ import { Acceleration } from './services/acceleration';
 import accelerationApi from './services/acceleration';
 import redisCache from './redis-cache';
 import blocks from './blocks';
+import { FIREFISH_ADDRESSES } from './firefish';
 import { ClusterMempool } from '../cluster-mempool/cluster-mempool';
 
 class Mempool {
@@ -296,12 +297,10 @@ class Mempool {
       const sliceLength = config.ESPLORA.BATCH_QUERY_BASE_SIZE;
       for (let i = 0; i < Math.ceil(remainingTxids.length / sliceLength); i++) {
         const slice = remainingTxids.slice(i * sliceLength, (i + 1) * sliceLength);
-        // [firefish] do NOT fetch prevouts here: we track the FULL mempool (for real fee estimates),
-        // so fetching each tx's prevouts would mean hundreds of thousands of extra RPC calls and a
-        // glacial sync. The input-based TEDSIG flag (spends from the liquidator) is therefore not
-        // labelled while a tx is unconfirmed; it gets labelled once the tx is mined (block processing
-        // has prevouts). The tx itself still shows in the mempool (it touches a Firefish address).
-        const txs = await transactionUtils.$getMempoolTransactionsExtended(slice, false, false, false);
+        // [firefish] when filtering to the (few) Firefish txs, fetch prevouts too so input-based
+        // flags (TEDSIG = spends from the liquidator address) can be detected. Skipped when not
+        // filtering, to keep the full-mempool sync fast.
+        const txs = await transactionUtils.$getMempoolTransactionsExtended(slice, FIREFISH_ADDRESSES.length > 0, false, false);
         logger.debug(`fetched ${txs.length} transactions`);
         this.updateTimerProgress(timer, 'fetched new transactions');
 
