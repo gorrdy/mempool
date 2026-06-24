@@ -64,6 +64,10 @@ class Server {
   private heapLogInterval: number = 60;
   private warnedHeapCritical: boolean = false;
   private lastHeapLogTime: number | null = null;
+  // [firefish] watchdog: timestamp of the last main-update-loop iteration start. If the loop hangs
+  // (e.g. an await on a dead backend socket never returns), the process exits and `restart:on-failure`
+  // brings it back — otherwise it can sit stuck for days (the process stays up but stops syncing).
+  private lastLoopStart: number = Date.now();
 
   constructor() {
     this.app = express();
@@ -242,6 +246,7 @@ class Server {
   /** @asyncSafe */
   async runMainUpdateLoop(): Promise<void> {
     const start = Date.now();
+    this.lastLoopStart = start; // [firefish] watchdog heartbeat (see healthCheck)
     try {
       try {
         await memPool.$updateMemPoolInfo();
@@ -395,6 +400,18 @@ class Server {
 
   healthCheck(): void {
     const now = Date.now();
+
+    // [firefish] main-loop watchdog: if the update loop hasn't started a new iteration in 10 minutes
+    // it's hung (a backend await that never returned). Exit so restart:on-failure restarts us.
+    if (config.MEMPOOL.ENABLED) {
+      const MAIN_LOOP_MAX_STALL_MS = 10 * 60 * 1000;
+      const stalledMs = now - this.lastLoopStart;
+      if (stalledMs > MAIN_LOOP_MAX_STALL_MS) {
+        logger.err(`Main update loop stalled for ${Math.round(stalledMs / 1000)}s — exiting so the container restarts.`);
+        process.exit(1);
+      }
+    }
+
     const stats = v8.getHeapStatistics();
     this.maxHeapSize = Math.max(stats.used_heap_size, this.maxHeapSize);
     const warnThreshold = 0.8 * stats.heap_size_limit;
